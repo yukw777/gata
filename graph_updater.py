@@ -168,3 +168,32 @@ class GraphEncoder(nn.Module):
         for rgcn in self.rgcns:
             x = rgcn(x, relation_features, adj)
         return x
+
+
+class DepthwiseSeparableConv1d(nn.Module):
+    """
+    Depthwise, separable 1d convolution to save computation in exchange for
+    a bit of accuracy.
+    https://towardsdatascience.com/a-basic-introduction-to-separable-convolutions-b99ec3102728
+    """
+
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int) -> None:
+        super().__init__()
+        self.depthwise_conv = torch.nn.Conv1d(
+            in_channels,
+            in_channels,
+            kernel_size,
+            groups=in_channels,
+            padding=kernel_size // 2,
+            bias=False,
+        )
+        self.pointwise_conv = torch.nn.Conv1d(in_channels, out_channels, 1)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        """
+        input: (batch, in_channels, seq_len_in)
+        output: (batch, out_channels, seq_len_out)
+
+        seq_len_out = (seq_len_in + 2 * (kernel_size // 2) - (kernel_size - 1) - 1) + 1
+        """
+        return self.pointwise_conv(self.depthwise_conv(input))

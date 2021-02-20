@@ -5,6 +5,7 @@ from graph_updater import (
     RelationalGraphConvolution,
     RGCNHighwayConnections,
     GraphEncoder,
+    DepthwiseSeparableConv1d,
 )
 
 
@@ -100,4 +101,22 @@ def test_graph_encoder(
             torch.rand(batch_size, num_relations, num_entity, num_entity),
         ).size()
         == output_size
+    )
+
+
+@pytest.mark.parametrize(
+    "in_channels,out_channels,kernel_size,batch_size,seq_len_in,seq_len_out",
+    [
+        (10, 5, 3, 2, 5, 5),
+        (15, 4, 2, 3, 10, 11),
+    ],
+)
+def test_depthwise_separable_conv_1d(
+    in_channels, out_channels, kernel_size, batch_size, seq_len_in, seq_len_out
+):
+    ds_conv = DepthwiseSeparableConv1d(in_channels, out_channels, kernel_size)
+    assert ds_conv(torch.rand(batch_size, in_channels, seq_len_in)).size() == (
+        batch_size,
+        out_channels,
+        seq_len_out,
     )
