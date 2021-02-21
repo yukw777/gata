@@ -6,6 +6,8 @@ from graph_updater import (
     RGCNHighwayConnections,
     GraphEncoder,
     DepthwiseSeparableConv1d,
+    PositionalEncoder,
+    PositionalEncoderTensor2Tensor,
 )
 
 
@@ -120,3 +122,53 @@ def test_depthwise_separable_conv_1d(
         out_channels,
         seq_len_out,
     )
+
+
+@pytest.mark.parametrize(
+    "channels,max_len,batch_size,seq_len",
+    [
+        (4, 10, 5, 6),
+        (10, 12, 3, 10),
+    ],
+)
+def test_pos_encoder_tensor2tensor(channels, max_len, batch_size, seq_len):
+    pe = PositionalEncoderTensor2Tensor(channels, max_len)
+    encoded = pe(
+        torch.zeros(
+            batch_size,
+            seq_len,
+            channels,
+        )
+    )
+    assert encoded.size() == (batch_size, seq_len, channels)
+    # sanity check, make sure the values of the first dimension of both halves
+    # of the channels is sin(0, 1, 2, ...) and cos(0, 1, 2, ...)
+    for i in range(batch_size):
+        assert encoded[i, :, 0].equal(torch.sin(torch.arange(seq_len).float()))
+        assert encoded[i, :, channels // 2].equal(
+            torch.cos(torch.arange(seq_len).float())
+        )
+
+
+@pytest.mark.parametrize(
+    "d_model,max_len,batch_size,seq_len",
+    [
+        (4, 10, 5, 6),
+        (10, 12, 3, 10),
+    ],
+)
+def test_pos_encoder(d_model, max_len, batch_size, seq_len):
+    pe = PositionalEncoder(d_model, max_len)
+    encoded = pe(
+        torch.zeros(
+            batch_size,
+            seq_len,
+            d_model,
+        )
+    )
+    assert encoded.size() == (batch_size, seq_len, d_model)
+    # sanity check, make sure the values of the first dimension is sin(0, 1, 2, ...)
+    # and the second dimension is cos(0, 1, 2, ...)
+    for i in range(batch_size):
+        assert encoded[i, :, 0].equal(torch.sin(torch.arange(seq_len).float()))
+        assert encoded[i, :, 1].equal(torch.cos(torch.arange(seq_len).float()))
