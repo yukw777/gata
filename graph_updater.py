@@ -107,7 +107,7 @@ class RGCNHighwayConnections(RelationalGraphConvolution):
         if self.entity_input_dim != self.out_dim:
             prev = self.input_linear(node_features)
         else:
-            prev = node_features.clone()
+            prev = node_features
         x = super().forward(node_features, relation_features, adj)
         gate = self.highway_sigmoid(self.highway(x))
         return gate * x + (1 - gate) * prev
