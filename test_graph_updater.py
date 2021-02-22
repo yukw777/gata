@@ -6,6 +6,7 @@ from graph_updater import (
     RGCNHighwayConnections,
     GraphEncoder,
     DepthwiseSeparableConv1d,
+    TextEncoderConvBlock,
     PositionalEncoder,
     PositionalEncoderTensor2Tensor,
 )
@@ -172,3 +173,20 @@ def test_pos_encoder(d_model, max_len, batch_size, seq_len):
     for i in range(batch_size):
         assert encoded[i, :, 0].equal(torch.sin(torch.arange(seq_len).float()))
         assert encoded[i, :, 1].equal(torch.cos(torch.arange(seq_len).float()))
+
+
+@pytest.mark.parametrize(
+    "channels,kernel_size,batch_size,seq_len",
+    [
+        (10, 3, 2, 5),
+        (15, 5, 3, 10),
+        (15, 11, 5, 20),
+    ],
+)
+def test_text_enc_conv_block(channels, kernel_size, batch_size, seq_len):
+    ds_conv = TextEncoderConvBlock(channels, kernel_size)
+    assert ds_conv(torch.rand(batch_size, seq_len, channels)).size() == (
+        batch_size,
+        seq_len,
+        channels,
+    )

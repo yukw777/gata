@@ -200,6 +200,33 @@ class DepthwiseSeparableConv1d(nn.Module):
         return self.pointwise_conv(self.depthwise_conv(input))
 
 
+class TextEncoderConvBlock(nn.Module):
+    """
+    Convolutional blocks used in QANet.
+    A layer norm followed by a depthwise, separable convolutional layer
+    with a residual connection.
+    """
+
+    def __init__(self, channels: int, kernel_size: int) -> None:
+        super().__init__()
+        assert (
+            kernel_size % 2 == 1
+        ), "kernel_size has to be odd in order to preserve the sequence length"
+        self.layer_norm = nn.LayerNorm(channels)
+        self.relu = nn.ReLU()
+        self.conv = DepthwiseSeparableConv1d(channels, channels, kernel_size)
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        """
+        input: (batch, seq_len, channels)
+        output: (batch, seq_len, channels)
+        """
+        residual = input
+        output = self.layer_norm(input)
+        output = self.relu(self.conv(output.transpose(1, 2))).transpose(1, 2)
+        return output + residual
+
+
 class PositionalEncoder(nn.Module):
     """
     The positional encoding from the original Transformer paper.
@@ -272,3 +299,20 @@ class PositionalEncoderTensor2Tensor(nn.Module):
         """
         # add positional encodings to the input using broadcast
         return input + self.pe[: input.size(1)]  # type: ignore
+
+
+class TextEncoderBlock(nn.Module):
+    """
+    Based on QANet (https://arxiv.org/abs/1804.09541)
+    """
+
+    def __init__(
+        self,
+        num_conv_layers: int,
+        conv_channels: int,
+        kernel_size: int,
+        hidden_dim: int,
+        num_heads: int,
+    ) -> None:
+        super().__init__()
+        self.pos_encoder = PositionalEncoderTensor2Tensor(hidden_dim, 512)
