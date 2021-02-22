@@ -309,10 +309,52 @@ class TextEncoderBlock(nn.Module):
     def __init__(
         self,
         num_conv_layers: int,
-        conv_channels: int,
         kernel_size: int,
         hidden_dim: int,
         num_heads: int,
     ) -> None:
         super().__init__()
         self.pos_encoder = PositionalEncoderTensor2Tensor(hidden_dim, 512)
+        self.conv_layers = nn.Sequential(
+            *[
+                TextEncoderConvBlock(hidden_dim, kernel_size)
+                for _ in range(num_conv_layers)
+            ]
+        )
+        self.self_attn_layer_norm = nn.LayerNorm(hidden_dim)
+        self.self_attn = nn.MultiheadAttention(hidden_dim, num_heads)
+        self.linear_layer_norm = nn.LayerNorm(hidden_dim)
+        self.linear_layers = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim),
+        )
+
+    def forward(
+        self, input: torch.Tensor, key_padding_mask: torch.Tensor = None
+    ) -> torch.Tensor:
+        """
+        input: (batch, seq_len, hidden_dim)
+        output: (batch, seq_len, hidden_dim)
+        """
+        # add the positional encodings
+        output = self.pos_encoder(input)
+
+        # conv layers
+        output = self.conv_layers(output)
+
+        # self attention layer
+        residual = output
+        output = self.self_attn_layer_norm(output)
+        output, _ = self.self_attn(
+            output, output, output, key_padding_mask=key_padding_mask
+        )
+        output += residual
+
+        # linear layer
+        residual = output
+        output = self.linear_layer_norm(output)
+        output = self.linear_layers(output)
+        output += residual
+
+        return output
