@@ -314,6 +314,7 @@ class TextEncoderBlock(nn.Module):
         num_heads: int,
     ) -> None:
         super().__init__()
+        assert hidden_dim % 2 == 0, "hidden_dim has to be even for positional encoding"
         self.pos_encoder = PositionalEncoderTensor2Tensor(hidden_dim, 512)
         self.conv_layers = nn.Sequential(
             *[
@@ -345,10 +346,14 @@ class TextEncoderBlock(nn.Module):
 
         # self attention layer
         residual = output
+        # MultiheadAttention expects batch dim to be 1 for q, k, v
+        # but 0 for key_padding_mask, so we need to transpose
+        output = output.transpose(0, 1)
         output = self.self_attn_layer_norm(output)
         output, _ = self.self_attn(
             output, output, output, key_padding_mask=key_padding_mask
         )
+        output = output.transpose(0, 1)
         output += residual
 
         # linear layer
