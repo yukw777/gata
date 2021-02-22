@@ -1,5 +1,6 @@
 import pytest
 import torch
+import torch.nn as nn
 
 from graph_updater import (
     RelationalGraphConvolution,
@@ -10,6 +11,7 @@ from graph_updater import (
     PositionalEncoderTensor2Tensor,
     TextEncoderConvBlock,
     TextEncoderBlock,
+    TextEncoder,
 )
 
 
@@ -216,4 +218,49 @@ def test_text_enc_block(
         batch_size,
         seq_len,
         hidden_dim,
+    )
+
+
+@pytest.mark.parametrize(
+    "num_embs,word_emb_dim,num_enc_blocks,"
+    "enc_block_num_conv_layers,enc_block_kernel_size,enc_block_hidden_dim,"
+    "enc_block_num_heads,batch_size,seq_len,pretrained_embedding",
+    [
+        (2, 10, 1, 1, 3, 8, 1, 1, 1, None),
+        (2, 10, 1, 1, 3, 8, 1, 2, 5, None),
+        (5, 20, 3, 5, 5, 10, 5, 3, 7, nn.Embedding.from_pretrained(torch.rand(5, 20))),
+    ],
+)
+def test_text_encoder(
+    num_embs,
+    word_emb_dim,
+    num_enc_blocks,
+    enc_block_num_conv_layers,
+    enc_block_kernel_size,
+    enc_block_hidden_dim,
+    enc_block_num_heads,
+    batch_size,
+    seq_len,
+    pretrained_embedding,
+):
+    text_encoder = TextEncoder(
+        num_embs,
+        word_emb_dim,
+        num_enc_blocks,
+        enc_block_num_conv_layers,
+        enc_block_kernel_size,
+        enc_block_hidden_dim,
+        enc_block_num_heads,
+        pretrained_embeddings=pretrained_embedding,
+    )
+    # random word ids and increasing masks
+    assert text_encoder(
+        torch.randint(0, num_embs, (batch_size, seq_len)),
+        torch.tensor(
+            [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
+        ),
+    ).size() == (
+        batch_size,
+        seq_len,
+        enc_block_hidden_dim,
     )
