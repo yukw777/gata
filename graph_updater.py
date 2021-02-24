@@ -420,6 +420,9 @@ class MaskedSoftmax(nn.Module):
         self.dim = dim
 
     def forward(self, input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        input, mask and output all have the same dimensions
+        """
         # replace the values to be ignored with negative infinity
         return F.softmax(input.masked_fill(mask == 0, float("-inf")), self.dim)
 
@@ -442,9 +445,48 @@ class ReprAggregator(nn.Module):
         self.w_Q = torch.nn.Parameter(w_Q)
         self.w_CQ = torch.nn.Parameter(w_CQ)
 
+        self.masked_softmax_ctx = MaskedSoftmax(1)
+        self.masked_softmax_query = MaskedSoftmax(2)
+
         bias = torch.empty(1)
         torch.nn.init.constant_(bias, 0)
         self.bias = torch.nn.Parameter(bias)
+
+    def forward(
+        self,
+        ctx: torch.Tensor,
+        query: torch.Tensor,
+        ctx_mask: torch.Tensor,
+        query_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        ctx: (batch, ctx_seq_len, hidden_dim)
+        query: (batch, query_seq_len, hidden_dim)
+        ctx_mask: (batch, ctx_seq_len)
+        query_mask: (batch, query_seq_len)
+
+        output: (batch, ctx_seq_len, 4 * hidden_dim)
+        """
+        ctx_seq_len = ctx.size(1)
+        query_seq_len = query.size(1)
+
+        # (batch, ctx_seq_len, query_seq_len)
+        similarity = self.trilinear_for_attention(ctx, query)
+        # (batch, ctx_seq_len, query_seq_len)
+        s_ctx = self.masked_softmax_ctx(
+            similarity, ctx_mask.unsqueeze(2).expand(-1, -1, query_seq_len)
+        )
+        # (batch, ctx_seq_len, query_seq_len)
+        s_query = self.masked_softmax_query(
+            similarity, query_mask.unsqueeze(1).expand(-1, ctx_seq_len, -1)
+        )
+        # (batch, ctx_seq_len, hidden_dim)
+        P = torch.bmm(s_query, query)
+        # (batch, ctx_seq_len, hidden_dim)
+        Q = torch.bmm(torch.bmm(s_query, s_ctx.transpose(1, 2)), ctx)
+
+        # (batch, ctx_seq_len, 4 * hidden_dim)
+        return torch.cat([ctx, P, ctx * P, ctx * Q], dim=2)
 
     def trilinear_for_attention(
         self, ctx: torch.Tensor, query: torch.Tensor
