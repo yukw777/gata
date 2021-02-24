@@ -14,7 +14,7 @@ from graph_updater import (
     TextEncoderBlock,
     TextEncoder,
     masked_softmax,
-    ReprAggregator,
+    ContextQueryAttention,
 )
 
 
@@ -286,8 +286,8 @@ def test_masked_softmax():
         (10, 3, 5, 10),
     ],
 )
-def test_repr_agg_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
-    ra = ReprAggregator(hidden_dim)
+def test_cqattn_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
+    ra = ContextQueryAttention(hidden_dim)
     batched_ctx = torch.rand(batch_size, ctx_seq_len, hidden_dim)
     batched_query = torch.rand(batch_size, query_seq_len, hidden_dim)
     batched_similarity = ra.trilinear_for_attention(batched_ctx, batched_query)
@@ -310,9 +310,9 @@ def test_repr_agg_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
         (10, 3, 5, 7),
     ],
 )
-def test_repr_aggregator(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
+def test_cqattn(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
     # test against non masked version as masked softmax is the weak point
-    ra = ReprAggregator(hidden_dim)
+    ra = ContextQueryAttention(hidden_dim)
     ctx = torch.rand(batch_size, ctx_seq_len, hidden_dim)
     query = torch.rand(batch_size, query_seq_len, hidden_dim)
     output = ra(

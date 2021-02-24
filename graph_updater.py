@@ -424,7 +424,7 @@ def masked_softmax(
     return F.softmax(input.masked_fill(mask == 0, float("-inf")), dim=dim)
 
 
-class ReprAggregator(nn.Module):
+class ContextQueryAttention(nn.Module):
     """
     Based on Context-Query Attention Layer from QANet, which is in turn
     based on Attention Flow Layer from https://arxiv.org/abs/1611.01603
