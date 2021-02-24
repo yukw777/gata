@@ -15,6 +15,7 @@ from graph_updater import (
     TextEncoder,
     masked_softmax,
     ContextQueryAttention,
+    ReprAggregator,
 )
 
 
@@ -338,3 +339,24 @@ def test_cqattn(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
     no_mask_output = torch.cat([ctx, P, ctx * P, ctx * Q], dim=2)
 
     assert output.equal(no_mask_output)
+
+
+@pytest.mark.parametrize(
+    "hidden_dim,batch_size,repr1_seq_len,repr2_seq_len",
+    [
+        (10, 1, 3, 5),
+        (10, 3, 5, 7),
+    ],
+)
+def test_repr_aggr(hidden_dim, batch_size, repr1_seq_len, repr2_seq_len):
+    ra = ReprAggregator(hidden_dim)
+    repr1 = torch.rand(batch_size, repr1_seq_len, hidden_dim)
+    repr2 = torch.rand(batch_size, repr2_seq_len, hidden_dim)
+    repr12, repr21 = ra(
+        repr1,
+        repr2,
+        torch.ones(batch_size, repr1_seq_len),
+        torch.ones(batch_size, repr2_seq_len),
+    )
+    assert repr12.size() == (batch_size, repr1_seq_len, hidden_dim)
+    assert repr21.size() == (batch_size, repr2_seq_len, hidden_dim)

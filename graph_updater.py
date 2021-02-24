@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import itertools
 import math
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 
 class RelationalGraphConvolution(nn.Module):
@@ -518,3 +518,30 @@ class ContextQueryAttention(nn.Module):
         res_CQ = torch.matmul(self.w_CQ.squeeze() * ctx, query.transpose(1, 2))
 
         return res_C + res_Q.transpose(1, 2) + res_CQ + self.bias
+
+
+class ReprAggregator(nn.Module):
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        self.cqattn = ContextQueryAttention(hidden_dim)
+        self.linear = nn.Linear(4 * hidden_dim, hidden_dim)
+
+    def forward(
+        self,
+        repr1: torch.Tensor,
+        repr2: torch.Tensor,
+        repr1_mask: torch.Tensor,
+        repr2_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        repr1: (batch, repr1_seq_len, hidden_dim)
+        repr2: (batch, repr2_seq_len, hidden_dim)
+        repr1_mask: (batch, repr1_seq_len)
+        repr2_mask: (batch, repr2_seq_len)
+
+        output: (batch, repr1_seq_len, hidden_dim), (batch, repr2_seq_len, hidden_dim)
+        """
+        return (
+            self.linear(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
+            self.linear(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
+        )
