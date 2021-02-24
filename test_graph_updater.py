@@ -13,7 +13,7 @@ from graph_updater import (
     TextEncoderConvBlock,
     TextEncoderBlock,
     TextEncoder,
-    MaskedSoftmax,
+    masked_softmax,
     ReprAggregator,
 )
 
@@ -270,10 +270,9 @@ def test_text_encoder(
 
 
 def test_masked_softmax():
-    m_softmax = MaskedSoftmax(1)
     batched_input = torch.tensor([[1, 2, 3], [1, 1, 2], [3, 2, 1]]).float()
     batched_mask = torch.tensor([[1, 1, 0], [0, 1, 1], [1, 1, 1]]).float()
-    batched_output = m_softmax(batched_input, batched_mask)
+    batched_output = masked_softmax(batched_input, batched_mask, dim=1)
 
     # compare the result from MaskedSoftmax with regular Softmax with filtered values
     for input, mask, output in zip(batched_input, batched_mask, batched_output):

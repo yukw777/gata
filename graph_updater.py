@@ -414,17 +414,14 @@ class TextEncoder(nn.Module):
         return output
 
 
-class MaskedSoftmax(nn.Module):
-    def __init__(self, dim: int) -> None:
-        super().__init__()
-        self.dim = dim
-
-    def forward(self, input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """
-        input, mask and output all have the same dimensions
-        """
-        # replace the values to be ignored with negative infinity
-        return F.softmax(input.masked_fill(mask == 0, float("-inf")), self.dim)
+def masked_softmax(
+    input: torch.Tensor, mask: torch.Tensor, dim: Optional[int] = None
+) -> torch.Tensor:
+    """
+    input, mask and output all have the same dimensions
+    """
+    # replace the values to be ignored with negative infinity
+    return F.softmax(input.masked_fill(mask == 0, float("-inf")), dim=dim)
 
 
 class ReprAggregator(nn.Module):
@@ -444,9 +441,6 @@ class ReprAggregator(nn.Module):
         self.w_C = torch.nn.Parameter(w_C)
         self.w_Q = torch.nn.Parameter(w_Q)
         self.w_CQ = torch.nn.Parameter(w_CQ)
-
-        self.masked_softmax_ctx = MaskedSoftmax(1)
-        self.masked_softmax_query = MaskedSoftmax(2)
 
         bias = torch.empty(1)
         torch.nn.init.constant_(bias, 0)
@@ -473,12 +467,12 @@ class ReprAggregator(nn.Module):
         # (batch, ctx_seq_len, query_seq_len)
         similarity = self.trilinear_for_attention(ctx, query)
         # (batch, ctx_seq_len, query_seq_len)
-        s_ctx = self.masked_softmax_ctx(
-            similarity, ctx_mask.unsqueeze(2).expand(-1, -1, query_seq_len)
+        s_ctx = masked_softmax(
+            similarity, ctx_mask.unsqueeze(2).expand(-1, -1, query_seq_len), dim=1
         )
         # (batch, ctx_seq_len, query_seq_len)
-        s_query = self.masked_softmax_query(
-            similarity, query_mask.unsqueeze(1).expand(-1, ctx_seq_len, -1)
+        s_query = masked_softmax(
+            similarity, query_mask.unsqueeze(1).expand(-1, ctx_seq_len, -1), dim=2
         )
         # (batch, ctx_seq_len, hidden_dim)
         P = torch.bmm(s_query, query)
