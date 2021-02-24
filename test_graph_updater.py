@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from graph_updater import (
     RelationalGraphConvolution,
@@ -12,6 +13,7 @@ from graph_updater import (
     TextEncoderConvBlock,
     TextEncoderBlock,
     TextEncoder,
+    MaskedSoftmax,
     ReprAggregator,
 )
 
@@ -265,6 +267,17 @@ def test_text_encoder(
         seq_len,
         enc_block_hidden_dim,
     )
+
+
+def test_masked_softmax():
+    m_softmax = MaskedSoftmax(1)
+    batched_input = torch.tensor([[1, 2, 3], [1, 1, 2], [3, 2, 1]]).float()
+    batched_mask = torch.tensor([[1, 1, 0], [0, 1, 1], [1, 1, 1]]).float()
+    batched_output = m_softmax(batched_input, batched_mask)
+
+    # compare the result from MaskedSoftmax with regular Softmax with filtered values
+    for input, mask, output in zip(batched_input, batched_mask, batched_output):
+        assert output[output != 0].equal(F.softmax(input[mask == 1], dim=0))
 
 
 @pytest.mark.parametrize(

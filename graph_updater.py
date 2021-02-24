@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import itertools
 import math
 
@@ -411,6 +412,16 @@ class TextEncoder(nn.Module):
         # (batch_size, seq_len, enc_block_hidden_dim)
 
         return output
+
+
+class MaskedSoftmax(nn.Module):
+    def __init__(self, dim: int) -> None:
+        super().__init__()
+        self.dim = dim
+
+    def forward(self, input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        # replace the values to be ignored with negative infinity
+        return F.softmax(input.masked_fill(mask == 0, float("-inf")), self.dim)
 
 
 class ReprAggregator(nn.Module):
