@@ -411,3 +411,63 @@ class TextEncoder(nn.Module):
         # (batch_size, seq_len, enc_block_hidden_dim)
 
         return output
+
+
+class ReprAggregator(nn.Module):
+    """
+    Based on Context-Query Attention Layer from QANet, which is in turn
+    based on Attention Flow Layer from https://arxiv.org/abs/1611.01603
+    """
+
+    def __init__(self, hidden_dim: int) -> None:
+        super().__init__()
+        w_C = torch.empty(hidden_dim, 1)
+        w_Q = torch.empty(hidden_dim, 1)
+        w_CQ = torch.empty(hidden_dim, 1)
+        torch.nn.init.xavier_uniform_(w_C)
+        torch.nn.init.xavier_uniform_(w_Q)
+        torch.nn.init.xavier_uniform_(w_CQ)
+        self.w_C = torch.nn.Parameter(w_C)
+        self.w_Q = torch.nn.Parameter(w_Q)
+        self.w_CQ = torch.nn.Parameter(w_CQ)
+
+        bias = torch.empty(1)
+        torch.nn.init.constant_(bias, 0)
+        self.bias = torch.nn.Parameter(bias)
+
+    def trilinear_for_attention(
+        self, ctx: torch.Tensor, query: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        ctx: (batch, ctx_seq_len, hidden_dim), context C
+        query: (batch, query_seq_len, hidden_dim), query Q
+        output: (batch, ctx_seq_len, query_seq_len), similarity matrix S
+
+        This is an optimized implementation. The number of multiplications of the
+        original equation S_ij = w^T[C_i; Q_j; C_i * Q_j] is
+        O(ctx_seq_len * query_seq_len * 3 * hidden_dim)
+        = O(ctx_seq_len * query_seq_len * hidden_dim)
+
+        We can reduce this number by splitting the weight matrix w into three parts,
+        one for each part of the concatenated vector [C_i; Q_j; C_i * Q_j].
+        Specifically,
+        S_ij = w^T[C_i; Q_j; C_i * Q_j]
+        = w^1C^1_i + ... + w^dC^d_i + w^{d+1}Q^1_j + ... +w^{2d}Q^d_j
+          + w^{2d+1}C^1_iQ^1_j + ... + w^{3d}C^d_iQ^d_j
+        = w_CC_i + w_QQ_j + w_{C * Q}C_iQ_j
+        where d = hidden_dim, and the superscript i denotes the i'th element of a
+        vector. The number of multiplications of this formulation is
+        O(hidden_dim + hidden_dim + hidden_dim + ctx_seq_len * query_seq_len)
+        = O(hidden_dim + ctx_seq_len * query_seq_len)
+        """
+        ctx_seq_len = ctx.size(1)
+        query_seq_len = query.size(1)
+
+        # (batch, ctx_seq_len, query_seq_len)
+        res_C = torch.matmul(ctx, self.w_C).expand(-1, -1, query_seq_len)
+        # (batch, query_seq_len, ctx_seq_len)
+        res_Q = torch.matmul(query, self.w_Q).expand(-1, -1, ctx_seq_len)
+        # (batch, ctx_seq_len, query_seq_len)
+        res_CQ = torch.matmul(self.w_CQ.squeeze() * ctx, query.transpose(1, 2))
+
+        return res_C + res_Q.transpose(1, 2) + res_CQ + self.bias

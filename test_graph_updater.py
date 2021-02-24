@@ -12,6 +12,7 @@ from graph_updater import (
     TextEncoderConvBlock,
     TextEncoderBlock,
     TextEncoder,
+    ReprAggregator,
 )
 
 
@@ -264,3 +265,27 @@ def test_text_encoder(
         seq_len,
         enc_block_hidden_dim,
     )
+
+
+@pytest.mark.parametrize(
+    "hidden_dim,batch_size,ctx_seq_len,query_seq_len",
+    [
+        (10, 1, 2, 4),
+        (10, 3, 5, 10),
+    ],
+)
+def test_repr_agg_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
+    ra = ReprAggregator(hidden_dim)
+    batched_ctx = torch.rand(batch_size, ctx_seq_len, hidden_dim)
+    batched_query = torch.rand(batch_size, query_seq_len, hidden_dim)
+    batched_similarity = ra.trilinear_for_attention(batched_ctx, batched_query)
+
+    # compare the result from the optimized version to the one from the naive version
+    combined_w = torch.cat([ra.w_C, ra.w_Q, ra.w_CQ]).squeeze()
+    for similarity, ctx, query in zip(batched_similarity, batched_ctx, batched_query):
+        for i in range(ctx_seq_len):
+            for j in range(query_seq_len):
+                naive_s_ij = torch.matmul(
+                    combined_w, torch.cat([ctx[i], query[j], ctx[i] * query[j]])
+                )
+                assert similarity[i, j].isclose(naive_s_ij)
