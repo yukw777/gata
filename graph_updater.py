@@ -52,6 +52,8 @@ class RelationalGraphConvolution(nn.Module):
         node_features: (batch, num_entity, entity_input_dim)
         relation_features: (batch, num_relation, relation_input_dim)
         adj: (batch, num_relations, num_entity, num_entity)
+
+        output: (batch, num_entity, out_dim)
         """
         support_list: List[torch.Tensor] = []
         # TODO: see if we can vectorize this loop
@@ -105,6 +107,13 @@ class RGCNHighwayConnections(RelationalGraphConvolution):
         relation_features: torch.Tensor,
         adj: torch.Tensor,
     ) -> torch.Tensor:
+        """
+        node_features: (batch, num_entity, entity_input_dim)
+        relation_features: (batch, num_relation, relation_input_dim)
+        adj: (batch, num_relations, num_entity, num_entity)
+
+        output: (batch, num_entity, out_dim)
+        """
         if self.entity_input_dim != self.out_dim:
             prev = self.input_linear(node_features)
         else:
@@ -162,9 +171,11 @@ class GraphEncoder(nn.Module):
         adj: torch.Tensor,
     ) -> torch.Tensor:
         """
-        node features: (batch, num_entity, input_dim)
-        relation features: (batch, num_relations, input_dim)
+        node features: (batch, num_entity, entity_input_dim)
+        relation features: (batch, num_relations, relation_input_dim)
         adjacency matrix: (batch, num_relations, num_entity, num_entity)
+
+        output: (batch, num_entity, hidden_dims[-1])
         """
         x = node_features
         for rgcn in self.rgcns:
@@ -545,3 +556,12 @@ class ReprAggregator(nn.Module):
             self.linear(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
             self.linear(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
         )
+
+
+def masked_mean(input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """
+    input: (batch, seq_len, hidden_dim)
+    mask: (batch, seq_len)
+    output: (batch, hidden_dim)
+    """
+    return (input * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
