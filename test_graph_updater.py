@@ -85,12 +85,12 @@ def test_r_gcn_highway_connections(
 
 @pytest.mark.parametrize(
     "entity_input_dim,relation_input_dim,num_relations,hidden_dims,"
-    "num_bases,num_entity,batch_size,output_size",
+    "num_bases,num_entity,batch_size",
     [
-        (10, 20, 5, [10, 20, 30], 3, 7, 5, (5, 7, 30)),
-        (10, 20, 5, [30, 30, 30], 3, 7, 5, (5, 7, 30)),
-        (20, 20, 10, [30, 30, 30], 5, 10, 3, (3, 10, 30)),
-        (20, 20, 10, [30, 20, 10], 5, 10, 3, (3, 10, 10)),
+        (10, 20, 5, [10, 20, 30], 3, 7, 5),
+        (10, 20, 5, [30, 30, 30], 3, 7, 5),
+        (20, 20, 10, [30, 30, 30], 5, 10, 3),
+        (20, 20, 10, [30, 20, 10], 5, 10, 3),
     ],
 )
 def test_graph_encoder(
@@ -101,7 +101,6 @@ def test_graph_encoder(
     num_bases,
     num_entity,
     batch_size,
-    output_size,
 ):
     graph_encoder = GraphEncoder(
         entity_input_dim, relation_input_dim, num_relations, hidden_dims, num_bases
@@ -112,7 +111,7 @@ def test_graph_encoder(
             torch.rand(batch_size, num_relations, relation_input_dim),
             torch.rand(batch_size, num_relations, num_entity, num_entity),
         ).size()
-        == output_size
+        == (batch_size, num_entity, hidden_dims[-1])
     )
 
 
