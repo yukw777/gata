@@ -302,7 +302,7 @@ def test_cqattn_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
                 naive_s_ij = torch.matmul(
                     combined_w, torch.cat([ctx[i], query[j], ctx[i] * query[j]])
                 )
-                assert similarity[i, j].isclose(naive_s_ij)
+                assert similarity[i, j].isclose(naive_s_ij, atol=1e-7)
 
 
 @pytest.mark.parametrize(
