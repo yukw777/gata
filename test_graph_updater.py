@@ -17,6 +17,7 @@ from graph_updater import (
     ContextQueryAttention,
     ReprAggregator,
     masked_mean,
+    GraphUpdater,
 )
 
 
@@ -391,4 +392,26 @@ def test_masked_mean():
                 [8, 3, 200],
             ]
         ).float()
+    )
+
+
+@pytest.mark.parametrize(
+    "batch,num_entity,obs_len,prev_action_len,hidden_dim",
+    [
+        (1, 3, 3, 5, 10),
+        (3, 5, 10, 12, 20),
+    ],
+)
+def test_graph_updater_f_delta(batch, num_entity, obs_len, prev_action_len, hidden_dim):
+    gu = GraphUpdater(hidden_dim)
+    assert (
+        gu.f_delta(
+            torch.rand(batch, num_entity, hidden_dim),
+            torch.rand(batch, obs_len, hidden_dim),
+            torch.rand(batch, prev_action_len, hidden_dim),
+            torch.rand(batch, num_entity),
+            torch.rand(batch, obs_len),
+            torch.rand(batch, prev_action_len),
+        ).size()
+        == (batch, 4 * hidden_dim)
     )

@@ -565,3 +565,56 @@ def masked_mean(input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     output: (batch, hidden_dim)
     """
     return (input * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
+
+
+class GraphUpdater(nn.Module):
+    def __init__(self, hidden_dim: int):
+        super().__init__()
+        # self.text_encoder = TextEncoder()
+        # self.graph_encoder = GraphEncoder()
+        self.repr_aggr = ReprAggregator(hidden_dim)
+        self.linear_for_rnncell = nn.Linear(4 * hidden_dim, hidden_dim)
+        self.rnncell = nn.GRUCell(hidden_dim, hidden_dim)
+
+    def f_delta(
+        self,
+        prev_node_hidden: torch.Tensor,
+        obs_hidden: torch.Tensor,
+        prev_action_hidden: torch.Tensor,
+        prev_node_mask: torch.Tensor,
+        obs_mask: torch.Tensor,
+        prev_action_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        prev_node_hidden: (batch, num_entity, hidden_dim)
+        obs_hidden: (batch, obs_len, hidden_dim)
+        prev_action_hidden: (batch, prev_action_len, hidden_dim)
+        prev_node_mask: (batch, num_entity)
+        obs_mask: (batch, obs_len)
+        prev_action_mask: (batch, prev_action_len)
+
+        output: (batch, 4 * hidden_dim)
+        """
+        # h_og: (batch, obs_len, hidden_dim)
+        # h_go: (batch, num_entity, hidden_dim)
+        h_og, h_go = self.repr_aggr(
+            obs_hidden, prev_node_hidden, obs_mask, prev_node_mask
+        )
+        # h_ag: (batch, prev_action_len, hidden_dim)
+        # h_ga: (batch, num_entity, hidden_dim)
+        h_ag, h_ga = self.repr_aggr(
+            prev_action_hidden, prev_node_hidden, prev_action_mask, prev_node_mask
+        )
+
+        mean_h_og = masked_mean(h_og, obs_mask)
+        mean_h_go = masked_mean(h_go, prev_node_mask)
+        mean_h_ag = masked_mean(h_ag, prev_action_mask)
+        mean_h_ga = masked_mean(h_go, prev_node_mask)
+
+        return torch.cat([mean_h_og, mean_h_go, mean_h_ag, mean_h_ga], dim=1)
+
+    def f_d(self, rnn_hidden: torch.Tensor) -> torch.Tensor:
+        pass
+
+    def forward(self, rnn_prev_hidden: Optional[torch.Tensor] = None) -> torch.Tensor:
+        pass
