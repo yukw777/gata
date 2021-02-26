@@ -35,7 +35,7 @@ class RelationalGraphConvolution(nn.Module):
             bias=False,
         )
         self.weight = torch.nn.Linear(self.num_bases, self.out_dim, bias=False)
-        self.bias = torch.nn.Parameter(torch.FloatTensor(self.out_dim))
+        self.bias = torch.nn.Parameter(torch.tensor(self.out_dim).float())
         self.activation = nn.Sigmoid()
 
         # initialize layers
