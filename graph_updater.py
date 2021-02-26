@@ -380,22 +380,14 @@ class TextEncoderBlock(nn.Module):
 class TextEncoder(nn.Module):
     def __init__(
         self,
-        num_embs: int,
         word_emb_dim: int,
         num_enc_blocks: int,
         enc_block_num_conv_layers: int,
         enc_block_kernel_size: int,
         enc_block_hidden_dim: int,
         enc_block_num_heads: int,
-        pretrained_embeddings: Optional[nn.Embedding] = None,
     ) -> None:
         super().__init__()
-        if pretrained_embeddings is not None:
-            assert num_embs == pretrained_embeddings.num_embeddings
-            assert word_emb_dim == pretrained_embeddings.embedding_dim
-            self.embeddings = pretrained_embeddings
-        else:
-            self.embeddings = nn.Embedding(num_embs, word_emb_dim)
         self.word_emb_prj = nn.Linear(word_emb_dim, enc_block_hidden_dim, bias=False)
         self.enc_blocks = nn.ModuleList(
             TextEncoderBlock(
@@ -407,16 +399,17 @@ class TextEncoder(nn.Module):
             for _ in range(num_enc_blocks)
         )
 
-    def forward(self, input_word_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, input_word_embs: torch.Tensor, mask: torch.Tensor
+    ) -> torch.Tensor:
         """
-        input_word_ids: (batch_size, seq_len)
+        input_word_embs: (batch_size, seq_len, word_emb_dim)
         mask: (batch_size, seq_len)
 
         output: (batch_size, seq_len, enc_block_hidden_dim)
         """
-        embs = self.embeddings(input_word_ids)
         # (batch_size, seq_len, word_emb_dim)
-        output = self.word_emb_prj(embs)
+        output = self.word_emb_prj(input_word_embs)
         # (batch_size, seq_len, enc_block_hidden_dim)
         for enc_block in self.enc_blocks:
             output = enc_block(output, key_padding_mask=mask == 0)
