@@ -6,6 +6,8 @@ import math
 
 from typing import List, Optional, Tuple
 
+from utils import masked_mean
+
 
 class RelationalGraphConvolution(nn.Module):
     """
@@ -549,15 +551,6 @@ class ReprAggregator(nn.Module):
             self.linear(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
             self.linear(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
         )
-
-
-def masked_mean(input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """
-    input: (batch, seq_len, hidden_dim)
-    mask: (batch, seq_len)
-    output: (batch, hidden_dim)
-    """
-    return (input * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
 
 
 class GraphUpdater(nn.Module):
