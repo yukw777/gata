@@ -54,3 +54,9 @@ class SpacyPreprocessor:
 
     def preprocess(self, batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(s) for s in batch])
+
+    @classmethod
+    def load_from_file(cls, word_vocab_path: str) -> "SpacyPreprocessor":
+        with open(word_vocab_path, "r") as f:
+            word_vocab = [word.strip() for word in f]
+        return cls(word_vocab)

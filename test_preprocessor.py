@@ -29,3 +29,8 @@ def test_spacy_preprocessor(batch, expected_preprocessed, expected_mask):
     preprocessed, mask = sp.preprocess(batch)
     assert preprocessed.equal(expected_preprocessed)
     assert mask.equal(expected_mask)
+
+
+def test_spacy_preprocessor_load_from_file():
+    sp = SpacyPreprocessor.load_from_file("vocabs/word_vocab.txt")
+    assert len(sp.word_to_id_dict) == 772
