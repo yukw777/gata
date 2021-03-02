@@ -15,14 +15,14 @@ class RelationalGraphConvolution(nn.Module):
 
     def __init__(
         self,
-        entity_input_dim: int,
+        node_input_dim: int,
         relation_input_dim: int,
         num_relations: int,
         out_dim: int,
         num_bases: int,
     ) -> None:
         super().__init__()
-        self.entity_input_dim = entity_input_dim
+        self.node_input_dim = node_input_dim
         self.relation_input_dim = relation_input_dim
         self.out_dim = out_dim
         self.num_relations = num_relations
@@ -30,7 +30,7 @@ class RelationalGraphConvolution(nn.Module):
 
         assert self.num_bases > 0
         self.bottleneck_layer = torch.nn.Linear(
-            (self.entity_input_dim + self.relation_input_dim) * self.num_relations,
+            (self.node_input_dim + self.relation_input_dim) * self.num_relations,
             self.num_bases,
             bias=False,
         )
@@ -49,11 +49,11 @@ class RelationalGraphConvolution(nn.Module):
         adj: torch.Tensor,
     ) -> torch.Tensor:
         """
-        node_features: (batch, num_entity, entity_input_dim)
+        node_features: (batch, num_node, node_input_dim)
         relation_features: (batch, num_relation, relation_input_dim)
-        adj: (batch, num_relations, num_entity, num_entity)
+        adj: (batch, num_relations, num_node, num_node)
 
-        output: (batch, num_entity, out_dim)
+        output: (batch, num_node, out_dim)
         """
         support_list: List[torch.Tensor] = []
         # TODO: see if we can vectorize this loop
@@ -65,20 +65,20 @@ class RelationalGraphConvolution(nn.Module):
 
             # concatenate each node feature and the current relation feature
             # then sum over neighbors by matrix multiplying with the adjacency matrix
-            # (batch, num_entity, relation_input_dim)
+            # (batch, num_node, relation_input_dim)
             _r_features = _r_features.repeat(1, node_features.size(1), 1)
-            # (batch, num_entity, entity_input_dim + relation_input_dim)
+            # (batch, num_node, node_input_dim + relation_input_dim)
             support_list.append(
                 torch.bmm(
                     adj[:, relation_idx],
                     torch.cat([node_features, _r_features], dim=-1),
                 )
             )
-        # (batch, num_entity, (entity_input_dim+relation_input_dim)*num_relations)
+        # (batch, num_node, (node_input_dim+relation_input_dim)*num_relations)
         supports = torch.cat(support_list, dim=-1)
-        # (batch, num_entity, num_bases)
+        # (batch, num_node, num_bases)
         supports = self.bottleneck_layer(supports)
-        # (batch, num_entity, out_dim)
+        # (batch, num_node, out_dim)
         output = self.weight(supports)
 
         return self.activation(output + self.bias)
@@ -87,17 +87,17 @@ class RelationalGraphConvolution(nn.Module):
 class RGCNHighwayConnections(RelationalGraphConvolution):
     def __init__(
         self,
-        entity_input_dim: int,
+        node_input_dim: int,
         relation_input_dim: int,
         num_relations: int,
         out_dim: int,
         num_bases: int,
     ) -> None:
         super().__init__(
-            entity_input_dim, relation_input_dim, num_relations, out_dim, num_bases
+            node_input_dim, relation_input_dim, num_relations, out_dim, num_bases
         )
-        if self.entity_input_dim != self.out_dim:
-            self.input_linear = nn.Linear(self.entity_input_dim, self.out_dim)
+        if self.node_input_dim != self.out_dim:
+            self.input_linear = nn.Linear(self.node_input_dim, self.out_dim)
         self.highway = nn.Linear(self.out_dim, self.out_dim)
         self.highway_sigmoid = nn.Sigmoid()
 
@@ -108,13 +108,13 @@ class RGCNHighwayConnections(RelationalGraphConvolution):
         adj: torch.Tensor,
     ) -> torch.Tensor:
         """
-        node_features: (batch, num_entity, entity_input_dim)
+        node_features: (batch, num_node, node_input_dim)
         relation_features: (batch, num_relation, relation_input_dim)
-        adj: (batch, num_relations, num_entity, num_entity)
+        adj: (batch, num_relations, num_node, num_node)
 
-        output: (batch, num_entity, out_dim)
+        output: (batch, num_node, out_dim)
         """
-        if self.entity_input_dim != self.out_dim:
+        if self.node_input_dim != self.out_dim:
             prev = self.input_linear(node_features)
         else:
             prev = node_features
@@ -132,14 +132,14 @@ class GraphEncoder(nn.Module):
 
     def __init__(
         self,
-        entity_input_dim: int,
+        node_input_dim: int,
         relation_input_dim: int,
         num_relations: int,
         hidden_dims: List[int],
         num_bases: int,
     ):
         super().__init__()
-        self.entity_input_dim = entity_input_dim
+        self.node_input_dim = node_input_dim
         self.relation_input_dim = relation_input_dim
         self.num_relations = num_relations
         self.hidden_dims = hidden_dims
@@ -147,7 +147,7 @@ class GraphEncoder(nn.Module):
 
         # cool trick to iterate through a list pairwise
         # https://stackoverflow.com/questions/5434891/iterate-a-list-as-pair-current-next-in-python
-        a, b = itertools.tee([self.entity_input_dim] + self.hidden_dims)
+        a, b = itertools.tee([self.node_input_dim] + self.hidden_dims)
         next(b, None)
         dims = zip(a, b)
 
@@ -171,11 +171,11 @@ class GraphEncoder(nn.Module):
         adj: torch.Tensor,
     ) -> torch.Tensor:
         """
-        node features: (batch, num_entity, entity_input_dim)
+        node features: (batch, num_node, node_input_dim)
         relation features: (batch, num_relations, relation_input_dim)
-        adjacency matrix: (batch, num_relations, num_entity, num_entity)
+        adjacency matrix: (batch, num_relations, num_node, num_node)
 
-        output: (batch, num_entity, hidden_dims[-1])
+        output: (batch, num_node, hidden_dims[-1])
         """
         x = node_features
         for rgcn in self.rgcns:
@@ -561,40 +561,107 @@ def masked_mean(input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
 
 
 class GraphUpdater(nn.Module):
-    def __init__(self, hidden_dim: int):
+    def __init__(
+        self,
+        hidden_dim: int,
+        word_emb_dim: int,
+        num_nodes: int,
+        node_emb_dim: int,
+        num_relations: int,
+        relation_emb_dim: int,
+        text_encoder_num_blocks: int,
+        text_encoder_num_conv_layers: int,
+        text_encoder_kernel_size: int,
+        text_encoder_num_heads: int,
+        graph_encoder_num_cov_layers: int,
+        graph_encoder_num_bases: int,
+        pretrained_word_embeddings: nn.Embedding,
+        node_name_embeddings: torch.Tensor,
+        relation_name_embeddings: torch.Tensor,
+    ) -> None:
         super().__init__()
-        # self.text_encoder = TextEncoder()
-        # self.graph_encoder = GraphEncoder()
+        # constants
+        # b/c we add inverse relations, num_relations has to be even
+        assert num_relations % 2 == 0
+        self.num_nodes = num_nodes
+        self.num_relations = num_relations
+
+        # untrainable word embeddings
+        assert word_emb_dim == pretrained_word_embeddings.embedding_dim
+        assert not pretrained_word_embeddings.weight.requires_grad
+        self.word_embeddings = pretrained_word_embeddings
+
+        # trainable node and relation embeddings
+        self.node_embeddings = nn.Embedding(num_nodes, node_emb_dim)
+        self.relation_embeddings = nn.Embedding(num_relations, relation_emb_dim)
+
+        # save the node and relation name embeddings as buffers. GATA used the
+        # mean word embeddings of the node and relation name words.
+        # these are static as we have a fixed set of node and relation names
+        # and word embeddings are frozen.
+        assert node_name_embeddings.size() == (self.num_nodes, word_emb_dim)
+        assert relation_name_embeddings.size() == (self.num_relations, word_emb_dim)
+        self.register_buffer("node_name_embeddings", node_name_embeddings)
+        self.register_buffer("relation_name_embeddings", relation_name_embeddings)
+
+        # encoders
+        self.text_encoder = TextEncoder(
+            word_emb_dim,
+            text_encoder_num_blocks,
+            text_encoder_num_conv_layers,
+            text_encoder_kernel_size,
+            hidden_dim,
+            text_encoder_num_heads,
+        )
+        self.graph_encoder = GraphEncoder(
+            word_emb_dim + node_emb_dim,
+            word_emb_dim + relation_emb_dim,
+            num_relations,
+            [hidden_dim] * graph_encoder_num_cov_layers,
+            graph_encoder_num_bases,
+        )
+
+        # other layers
         self.repr_aggr = ReprAggregator(hidden_dim)
-        self.linear_for_rnncell = nn.Linear(4 * hidden_dim, hidden_dim)
+        self.rnncell_input_prj = nn.Sequential(
+            nn.Linear(4 * hidden_dim, hidden_dim), nn.Tanh()
+        )
         self.rnncell = nn.GRUCell(hidden_dim, hidden_dim)
+        self.f_d_layers = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, num_relations // 2 * num_nodes * num_nodes),
+            nn.Tanh(),
+        )
 
     def f_delta(
         self,
         prev_node_hidden: torch.Tensor,
         obs_hidden: torch.Tensor,
         prev_action_hidden: torch.Tensor,
-        prev_node_mask: torch.Tensor,
         obs_mask: torch.Tensor,
         prev_action_mask: torch.Tensor,
     ) -> torch.Tensor:
         """
-        prev_node_hidden: (batch, num_entity, hidden_dim)
+        prev_node_hidden: (batch, num_node, hidden_dim)
         obs_hidden: (batch, obs_len, hidden_dim)
         prev_action_hidden: (batch, prev_action_len, hidden_dim)
-        prev_node_mask: (batch, num_entity)
         obs_mask: (batch, obs_len)
         prev_action_mask: (batch, prev_action_len)
 
         output: (batch, 4 * hidden_dim)
         """
+        batch, num_node, _ = prev_node_hidden.size()
+        # no masks necessary for prev_node_hidden, so just create a fake one
+        prev_node_mask = torch.ones(batch, num_node, device=prev_node_hidden.device)
+
         # h_og: (batch, obs_len, hidden_dim)
-        # h_go: (batch, num_entity, hidden_dim)
+        # h_go: (batch, num_node, hidden_dim)
         h_og, h_go = self.repr_aggr(
             obs_hidden, prev_node_hidden, obs_mask, prev_node_mask
         )
         # h_ag: (batch, prev_action_len, hidden_dim)
-        # h_ga: (batch, num_entity, hidden_dim)
+        # h_ga: (batch, num_node, hidden_dim)
         h_ag, h_ga = self.repr_aggr(
             prev_action_hidden, prev_node_hidden, prev_action_mask, prev_node_mask
         )
@@ -607,7 +674,103 @@ class GraphUpdater(nn.Module):
         return torch.cat([mean_h_og, mean_h_go, mean_h_ag, mean_h_ga], dim=1)
 
     def f_d(self, rnn_hidden: torch.Tensor) -> torch.Tensor:
-        pass
+        """
+        rnn_hidden: (batch, hidden_dim)
+        output: (batch, num_relation, num_node, num_node)
+        """
+        h = self.f_d_layers(rnn_hidden).view(
+            -1, self.num_relations // 2, self.num_nodes, self.num_nodes
+        )
+        # (batch, num_relation // 2, num_node, num_node)
+        return torch.cat([h, h.transpose(2, 3)], dim=1)
+        # (batch, num_relation, num_node, num_node)
 
-    def forward(self, rnn_prev_hidden: Optional[torch.Tensor] = None) -> torch.Tensor:
-        pass
+    def forward(
+        self,
+        obs_word_ids: torch.Tensor,
+        prev_action_word_ids: torch.Tensor,
+        obs_mask: torch.Tensor,
+        prev_action_mask: torch.Tensor,
+        rnn_prev_hidden: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        obs_word_ids: (batch, obs_len)
+        prev_action_word_ids: (batch, prev_action_len)
+        obs_mask: (batch, obs_len)
+        prev_action_mask: (batch, prev_action_len)
+        rnn_prev_hidden: (batch, hidden_dim)
+
+        output: (batch, hidden_dim), hidden state of the rnn cell
+        """
+        batch_size = obs_word_ids.size(0)
+
+        # encode text observations and previous actions
+        obs_word_embs = self.word_embeddings(obs_word_ids)
+        # (batch, obs_len, word_emb_dim)
+        encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
+        # (batch, obs_len, hidden_dim)
+        prev_action_embs = self.word_embeddings(prev_action_word_ids)
+        # (batch, prev_action_len, word_emb_dim)
+        encoded_prev_action = self.text_encoder(prev_action_embs, prev_action_mask)
+        # (batch, prev_action_len, hidden_dim)
+
+        # decode the previous graph
+        if rnn_prev_hidden is None:
+            prev_graph = torch.zeros(
+                batch_size,
+                self.num_relations,
+                self.num_nodes,
+                self.num_nodes,
+                device=obs_word_ids.device,
+            )
+            # (batch, num_relation, num_node, num_node)
+        else:
+            prev_graph = self.f_d(rnn_prev_hidden)
+            # (batch, num_relation, num_node, num_node)
+
+        # get the initial graph node embeddings by concatenating the node name
+        # embeddings and node embeddings
+        node_embs = self.node_embeddings(
+            torch.arange(self.num_nodes, device=self.node_embeddings.weight.device)
+        )
+        # (num_node, node_emb_dim)
+        node_features = (
+            torch.cat([self.node_name_embeddings, node_embs], dim=1)  # type: ignore
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1)
+        )
+        # (batch, num_node, word_emb_dim + node_emb_dim)
+        relation_embs = self.relation_embeddings(
+            torch.arange(
+                self.num_relations, device=self.relation_embeddings.weight.device
+            )
+        )
+        # (num_node, relation_emb_dim)
+        relation_features = (
+            torch.cat(
+                [self.relation_name_embeddings, relation_embs], dim=1  # type: ignore
+            )
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1)
+        )
+        # (batch, num_node, word_emb_dim + relation_emb_dim)
+
+        # encode the previous graph
+        encoded_prev_graph = self.graph_encoder(
+            node_features, relation_features, prev_graph
+        )
+        # (batch, num_node, hidden_dim)
+
+        delta_g = self.f_delta(
+            encoded_prev_graph,
+            encoded_obs,
+            encoded_prev_action,
+            obs_mask,
+            prev_action_mask,
+        )
+        # (batch, 4 * hidden_dim)
+
+        rnn_input = self.rnncell_input_prj(delta_g)
+        # (batch, hidden_dim)
+        return self.rnncell(rnn_input, hx=rnn_prev_hidden)
+        # (batch, hidden_dim)

@@ -297,7 +297,7 @@ def test_cqattn_trilinear(hidden_dim, batch_size, ctx_seq_len, query_seq_len):
                 naive_s_ij = torch.matmul(
                     combined_w, torch.cat([ctx[i], query[j], ctx[i] * query[j]])
                 )
-                assert similarity[i, j].isclose(naive_s_ij, atol=1e-7)
+                assert similarity[i, j].isclose(naive_s_ij, atol=1e-6)
 
 
 @pytest.mark.parametrize(
@@ -390,22 +390,61 @@ def test_masked_mean():
 
 
 @pytest.mark.parametrize(
-    "batch,num_entity,obs_len,prev_action_len,hidden_dim",
+    "hidden_dim,word_emb_dim,num_nodes,node_emb_dim,num_relations,relation_emb_dim,"
+    "text_encoder_num_blocks,text_encoder_num_conv_layers,text_encoder_kernel_size,"
+    "text_encoder_num_heads,graph_encoder_num_conv_layers,graph_encoder_num_bases,"
+    "batch,obs_len,prev_action_len,rnn_prev_hidden",
     [
-        (1, 3, 3, 5, 10),
-        (3, 5, 10, 12, 20),
+        (10, 20, 3, 16, 6, 12, 1, 1, 3, 1, 1, 1, 1, 5, 7, None),
+        (10, 20, 3, 16, 6, 12, 1, 1, 3, 1, 1, 1, 1, 5, 7, torch.rand(1, 10)),
+        (12, 24, 5, 32, 8, 16, 3, 6, 5, 4, 4, 3, 3, 7, 3, None),
+        (12, 24, 5, 32, 8, 16, 3, 6, 5, 4, 4, 3, 3, 7, 3, torch.rand(3, 12)),
     ],
 )
-def test_graph_updater_f_delta(batch, num_entity, obs_len, prev_action_len, hidden_dim):
-    gu = GraphUpdater(hidden_dim)
+def test_graph_updater_forward(
+    hidden_dim,
+    word_emb_dim,
+    num_nodes,
+    node_emb_dim,
+    num_relations,
+    relation_emb_dim,
+    text_encoder_num_blocks,
+    text_encoder_num_conv_layers,
+    text_encoder_kernel_size,
+    text_encoder_num_heads,
+    graph_encoder_num_conv_layers,
+    graph_encoder_num_bases,
+    batch,
+    obs_len,
+    prev_action_len,
+    rnn_prev_hidden,
+):
+    word_embeddings = nn.Embedding(100, word_emb_dim)
+    word_embeddings.weight.requires_grad = False
+    gu = GraphUpdater(
+        hidden_dim,
+        word_emb_dim,
+        num_nodes,
+        node_emb_dim,
+        num_relations,
+        relation_emb_dim,
+        text_encoder_num_blocks,
+        text_encoder_num_conv_layers,
+        text_encoder_kernel_size,
+        text_encoder_num_heads,
+        graph_encoder_num_conv_layers,
+        graph_encoder_num_bases,
+        word_embeddings,
+        torch.rand(num_nodes, word_emb_dim),
+        torch.rand(num_relations, word_emb_dim),
+    )
     assert (
-        gu.f_delta(
-            torch.rand(batch, num_entity, hidden_dim),
-            torch.rand(batch, obs_len, hidden_dim),
-            torch.rand(batch, prev_action_len, hidden_dim),
-            torch.rand(batch, num_entity),
-            torch.rand(batch, obs_len),
-            torch.rand(batch, prev_action_len),
+        gu(
+            torch.randint(100, (batch, obs_len)),
+            torch.randint(100, (batch, prev_action_len)),
+            torch.randint(2, (batch, obs_len)).float(),
+            torch.randint(2, (batch, prev_action_len)).float(),
+            rnn_prev_hidden,
         ).size()
-        == (batch, 4 * hidden_dim)
+        == (batch, hidden_dim)
     )
