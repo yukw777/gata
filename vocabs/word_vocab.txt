@@ -259,7 +259,6 @@ drop
 dump
 durable
 east
-east_of
 eat
 eccentric
 ed
@@ -474,7 +473,6 @@ noble
 noise
 normal
 north
-north_of
 not
 note
 nothing
@@ -518,7 +516,6 @@ pantry
 pantrys
 parsley
 part
-part_of
 patio
 pay
 peanut
@@ -632,7 +629,6 @@ sorry
 sort
 sound
 south
-south_of
 special
 spin
 stable
@@ -745,7 +741,6 @@ welcome
 well
 were
 west
-west_of
 what
 when
 where
