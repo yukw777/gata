@@ -1,7 +1,7 @@
 import torch
 
 from preprocessor import SpacyPreprocessor, PAD, UNK
-from train_utils import load_fasttext
+from utils import load_fasttext
 
 
 def test_load_fasttext():
