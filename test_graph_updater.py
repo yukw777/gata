@@ -406,13 +406,26 @@ def test_graph_updater_forward(
         torch.rand(num_nodes, word_emb_dim),
         torch.rand(num_relations, word_emb_dim),
     )
-    assert (
-        gu(
-            torch.randint(100, (batch, obs_len)),
-            torch.randint(100, (batch, prev_action_len)),
-            torch.randint(2, (batch, obs_len)).float(),
-            torch.randint(2, (batch, prev_action_len)).float(),
-            rnn_prev_hidden,
-        ).size()
-        == (batch, hidden_dim)
+    results = gu(
+        torch.randint(100, (batch, obs_len)),
+        torch.randint(100, (batch, prev_action_len)),
+        torch.randint(2, (batch, obs_len)).float(),
+        torch.randint(2, (batch, prev_action_len)).float(),
+        rnn_prev_hidden,
     )
+    assert results["h_t"].size() == (batch, hidden_dim)
+    assert results["g_t"].size() == (batch, num_relations, num_nodes, num_nodes)
+
+    # pretraining
+    gu.pretraining = True
+    results = gu(
+        torch.randint(100, (batch, obs_len)),
+        torch.randint(100, (batch, prev_action_len)),
+        torch.randint(2, (batch, obs_len)).float(),
+        torch.randint(2, (batch, prev_action_len)).float(),
+        rnn_prev_hidden,
+    )
+    assert results["h_t"].size() == (batch, hidden_dim)
+    assert results["g_t"].size() == (batch, num_relations, num_nodes, num_nodes)
+    assert results["h_ag"].size() == (batch, prev_action_len, hidden_dim)
+    assert results["h_ga"].size() == (batch, num_nodes, hidden_dim)

@@ -4,7 +4,7 @@ import torch.nn.functional as F
 import itertools
 import math
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 from utils import masked_mean
 
@@ -627,6 +627,9 @@ class GraphUpdater(nn.Module):
             nn.Tanh(),
         )
 
+        # pretraining flag
+        self.pretraining = False
+
     def f_delta(
         self,
         prev_node_hidden: torch.Tensor,
@@ -644,9 +647,11 @@ class GraphUpdater(nn.Module):
 
         output: (batch, 4 * hidden_dim)
         """
-        batch, num_node, _ = prev_node_hidden.size()
+        batch_size = prev_node_hidden.size(0)
         # no masks necessary for prev_node_hidden, so just create a fake one
-        prev_node_mask = torch.ones(batch, num_node, device=prev_node_hidden.device)
+        prev_node_mask = torch.ones(
+            batch_size, self.num_nodes, device=prev_node_hidden.device
+        )
 
         # h_og: (batch, obs_len, hidden_dim)
         # h_go: (batch, num_node, hidden_dim)
@@ -685,7 +690,7 @@ class GraphUpdater(nn.Module):
         obs_mask: torch.Tensor,
         prev_action_mask: torch.Tensor,
         rnn_prev_hidden: Optional[torch.Tensor] = None,
-    ) -> torch.Tensor:
+    ) -> Dict[str, torch.Tensor]:
         """
         obs_word_ids: (batch, obs_len)
         prev_action_word_ids: (batch, prev_action_len)
@@ -693,7 +698,17 @@ class GraphUpdater(nn.Module):
         prev_action_mask: (batch, prev_action_len)
         rnn_prev_hidden: (batch, hidden_dim)
 
-        output: (batch, hidden_dim), hidden state of the rnn cell
+        output:
+        {
+            'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim)
+            'g_t': encoded graph at time t; (batch, num_relation, num_node, num_node)
+            'h_ag': aggregated node representation of the current graph
+                with the previous action. Used for pretraining.
+                (batch, num_node, hidden_dim)
+            'h_ga': aggregated representation of the previous action
+                with the current graph. Used for pretraining.
+                (batch, prev_action_len, hidden_dim)
+        }
         """
         batch_size = obs_word_ids.size(0)
 
@@ -765,5 +780,33 @@ class GraphUpdater(nn.Module):
 
         rnn_input = self.rnncell_input_prj(delta_g)
         # (batch, hidden_dim)
-        return self.rnncell(rnn_input, hx=rnn_prev_hidden)
+        h_t = self.rnncell(rnn_input, hx=rnn_prev_hidden)
         # (batch, hidden_dim)
+
+        # (batch, num_node, hidden_dim)
+        curr_graph = self.f_d(h_t)
+        # (batch, num_relation, num_node, num_node)
+
+        results: Dict[str, torch.Tensor] = {"h_t": h_t, "g_t": curr_graph}
+        if not self.pretraining:
+            return results
+
+        # pretraining, so calculate the aggregated representations of
+        # the current graph and previous action
+        # no masks necessary for encoded_curr_graph, so just create a fake one
+        encoded_curr_graph = self.graph_encoder(
+            node_features, relation_features, curr_graph
+        )
+        # (batch, num_node, hidden_dim)
+        h_ag, h_ga = self.repr_aggr(
+            encoded_prev_action,
+            encoded_curr_graph,
+            prev_action_mask,
+            torch.ones(batch_size, self.num_nodes),
+        )
+        # h_ag: (batch, prev_action_len, hidden_dim)
+        # h_ga: (batch, num_node, hidden_dim)
+        results["h_ag"] = h_ag
+        results["h_ga"] = h_ga
+
+        return results
