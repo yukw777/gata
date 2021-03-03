@@ -400,21 +400,25 @@ class TextEncoder(nn.Module):
 
     def forward(
         self, input_word_embs: torch.Tensor, mask: torch.Tensor
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         input_word_embs: (batch_size, seq_len, word_emb_dim)
         mask: (batch_size, seq_len)
 
-        output: (batch_size, seq_len, enc_block_hidden_dim)
+        output:
+            encoded: (batch_size, seq_len, enc_block_hidden_dim)
+            projected_input_word_embs: (batch_size, seq_len, enc_block_hidden_dim)
+                Useful for observation generation pretraining
         """
         # (batch_size, seq_len, word_emb_dim)
-        output = self.word_emb_prj(input_word_embs)
+        projected = self.word_emb_prj(input_word_embs)
+        output = projected
         # (batch_size, seq_len, enc_block_hidden_dim)
         for enc_block in self.enc_blocks:
             output = enc_block(output, mask)
         # (batch_size, seq_len, enc_block_hidden_dim)
 
-        return output
+        return output, projected
 
 
 class ContextQueryAttention(nn.Module):
@@ -695,6 +699,8 @@ class GraphUpdater(nn.Module):
             'h_ga': aggregated representation of the previous action
                 with the current graph. Used for pretraining.
                 (batch, prev_action_len, hidden_dim)
+            'prj_obs': projected input obs word embeddings. Used for pretraining.
+                (batch, obs_len, hidden_dim)
         }
         """
         batch_size = obs_word_ids.size(0)
@@ -702,11 +708,12 @@ class GraphUpdater(nn.Module):
         # encode text observations and previous actions
         obs_word_embs = self.word_embeddings(obs_word_ids)
         # (batch, obs_len, word_emb_dim)
-        encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
-        # (batch, obs_len, hidden_dim)
+        encoded_obs, prj_obs = self.text_encoder(obs_word_embs, obs_mask)
+        # encoded_obs: (batch, obs_len, hidden_dim)
+        # prj_obs: (batch, obs_len, hidden_dim)
         prev_action_embs = self.word_embeddings(prev_action_word_ids)
         # (batch, prev_action_len, word_emb_dim)
-        encoded_prev_action = self.text_encoder(prev_action_embs, prev_action_mask)
+        encoded_prev_action, _ = self.text_encoder(prev_action_embs, prev_action_mask)
         # (batch, prev_action_len, hidden_dim)
 
         # decode the previous graph
@@ -795,5 +802,8 @@ class GraphUpdater(nn.Module):
         # h_ga: (batch, num_node, hidden_dim)
         results["h_ag"] = h_ag
         results["h_ga"] = h_ga
+
+        # finally include prj_obs
+        results["prj_obs"] = prj_obs
 
         return results

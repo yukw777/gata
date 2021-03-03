@@ -252,12 +252,18 @@ def test_text_encoder(
         enc_block_num_heads,
     )
     # random word ids and increasing masks
-    assert text_encoder(
+    encoded, projected = text_encoder(
         torch.rand(batch_size, seq_len, word_emb_dim),
         torch.tensor(
             [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
         ),
-    ).size() == (
+    )
+    assert encoded.size() == (
+        batch_size,
+        seq_len,
+        enc_block_hidden_dim,
+    )
+    assert projected.size() == (
         batch_size,
         seq_len,
         enc_block_hidden_dim,
