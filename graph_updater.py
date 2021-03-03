@@ -517,7 +517,7 @@ class ReprAggregator(nn.Module):
     def __init__(self, hidden_dim: int) -> None:
         super().__init__()
         self.cqattn = ContextQueryAttention(hidden_dim)
-        self.linear = nn.Linear(4 * hidden_dim, hidden_dim)
+        self.prj = nn.Linear(4 * hidden_dim, hidden_dim, bias=False)
 
     def forward(
         self,
@@ -535,8 +535,8 @@ class ReprAggregator(nn.Module):
         output: (batch, repr1_seq_len, hidden_dim), (batch, repr2_seq_len, hidden_dim)
         """
         return (
-            self.linear(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
-            self.linear(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
+            self.prj(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
+            self.prj(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
         )
 
 
