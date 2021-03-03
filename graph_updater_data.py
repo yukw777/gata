@@ -86,7 +86,7 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
                 'obs_mask': tensor of shape (batch, obs_len),
                 'prev_action_word_ids': tensor of shape (batch, prev_action_len),
                 'prev_action_mask': tensor of shape (batch, prev_action_len),
-                'groundtruth_obs_word_ids': tensor of shape (batch, output_obs_seq_len),
+                'groundtruth_obs_word_ids': tensor of shape (batch, obs_len),
             },
             ...
         ], episode_mask of shape (batch, max_episode_len)
