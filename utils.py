@@ -30,3 +30,16 @@ def masked_mean(input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
     output: (batch, hidden_dim)
     """
     return (input * mask.unsqueeze(-1)).sum(dim=1) / mask.sum(dim=1, keepdim=True)
+
+
+def generate_square_subsequent_mask(size: int) -> torch.Tensor:
+    """
+    Generate a square subsequent mask of the given size.
+    Useful for attn_mask in MultiheadAttention.
+
+    For example, if size == 3:
+    [[False,  True,  True],
+     [False, False,  True],
+     [False, False, False]]
+    """
+    return torch.triu(torch.ones(size, size) == 1, diagonal=1)

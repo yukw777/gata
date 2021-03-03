@@ -1,7 +1,8 @@
 import torch
+import pytest
 
 from preprocessor import SpacyPreprocessor, PAD, UNK
-from utils import load_fasttext, masked_mean
+from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
 
 
 def test_load_fasttext():
@@ -55,3 +56,10 @@ def test_masked_mean():
             ]
         ).float()
     )
+
+
+@pytest.mark.parametrize("size", [1, 3, 5, 7])
+def test_generate_subsequent_mask(size):
+    mask = generate_square_subsequent_mask(size)
+    # assert that the sum of tril and triu is the original mask
+    assert mask.equal(torch.tril(mask) + torch.triu(mask, diagonal=1))
