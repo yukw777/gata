@@ -215,7 +215,7 @@ def test_text_enc_block(
     # random tensors and increasing masks
     assert text_enc_block(
         torch.rand(batch_size, seq_len, hidden_dim),
-        key_padding_mask=torch.tensor(
+        torch.tensor(
             [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
         ),
     ).size() == (

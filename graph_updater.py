@@ -345,11 +345,11 @@ class TextEncoderBlock(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
         )
 
-    def forward(
-        self, input: torch.Tensor, key_padding_mask: torch.Tensor = None
-    ) -> torch.Tensor:
+    def forward(self, input: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
         """
         input: (batch, seq_len, hidden_dim)
+        mask: (batch, seq_len)
+
         output: (batch, seq_len, hidden_dim)
         """
         # add the positional encodings
@@ -364,9 +364,7 @@ class TextEncoderBlock(nn.Module):
         # but 0 for key_padding_mask, so we need to transpose
         output = output.transpose(0, 1)
         output = self.self_attn_layer_norm(output)
-        output, _ = self.self_attn(
-            output, output, output, key_padding_mask=key_padding_mask
-        )
+        output, _ = self.self_attn(output, output, output, key_padding_mask=mask == 0)
         output = output.transpose(0, 1)
         output += residual
 
@@ -414,7 +412,7 @@ class TextEncoder(nn.Module):
         output = self.word_emb_prj(input_word_embs)
         # (batch_size, seq_len, enc_block_hidden_dim)
         for enc_block in self.enc_blocks:
-            output = enc_block(output, key_padding_mask=mask == 0)
+            output = enc_block(output, mask)
         # (batch_size, seq_len, enc_block_hidden_dim)
 
         return output
