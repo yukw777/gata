@@ -137,6 +137,44 @@ class TextDecoderBlock(nn.Module):
         return output
 
 
+class TextDecoder(nn.Module):
+    def __init__(
+        self, num_dec_blocks: int, dec_block_hidden_dim: int, dec_block_num_heads: int
+    ) -> None:
+        super().__init__()
+        self.dec_blocks = nn.ModuleList(
+            TextDecoderBlock(dec_block_hidden_dim, dec_block_num_heads)
+            for _ in range(num_dec_blocks)
+        )
+
+    def forward(
+        self,
+        input: torch.Tensor,
+        input_mask: torch.Tensor,
+        node_hidden: torch.Tensor,
+        prev_action_hidden: torch.Tensor,
+        prev_action_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        input: (batch, input_seq_len, hidden_dim)
+        input_mask: (batch, input_seq_len)
+        node_hidden: (batch, num_node, hidden_dim)
+        prev_action_hidden: (batch, prev_action_len, hidden_dim)
+        prev_action_mask: (batch, prev_action_len)
+
+        output: (batch, input_seq_len, hidden_dim)
+        """
+        # (batch_size, input_seq_len, hidden_dim)
+        output = input
+        for dec_block in self.dec_blocks:
+            output = dec_block(
+                output, input_mask, node_hidden, prev_action_hidden, prev_action_mask
+            )
+        # (batch_size, input_seq_len, hidden_dim)
+
+        return output
+
+
 class GraphUpdaterObsGen(pl.LightningModule):
     def __init__(
         self,
