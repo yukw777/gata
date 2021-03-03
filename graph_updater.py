@@ -1,12 +1,11 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import itertools
 import math
 
 from typing import List, Optional, Tuple, Dict
 
-from utils import masked_mean
+from utils import masked_mean, masked_softmax
 
 
 class RelationalGraphConvolution(nn.Module):
@@ -416,16 +415,6 @@ class TextEncoder(nn.Module):
         # (batch_size, seq_len, enc_block_hidden_dim)
 
         return output
-
-
-def masked_softmax(
-    input: torch.Tensor, mask: torch.Tensor, dim: Optional[int] = None
-) -> torch.Tensor:
-    """
-    input, mask and output all have the same dimensions
-    """
-    # replace the values to be ignored with negative infinity
-    return F.softmax(input.masked_fill(mask == 0, float("-inf")), dim=dim)
 
 
 class ContextQueryAttention(nn.Module):

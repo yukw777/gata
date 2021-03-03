@@ -13,7 +13,6 @@ from graph_updater import (
     TextEncoderConvBlock,
     TextEncoderBlock,
     TextEncoder,
-    masked_softmax,
     ContextQueryAttention,
     ReprAggregator,
     GraphUpdater,
@@ -263,16 +262,6 @@ def test_text_encoder(
         seq_len,
         enc_block_hidden_dim,
     )
-
-
-def test_masked_softmax():
-    batched_input = torch.tensor([[1, 2, 3], [1, 1, 2], [3, 2, 1]]).float()
-    batched_mask = torch.tensor([[1, 1, 0], [0, 1, 1], [1, 1, 1]]).float()
-    batched_output = masked_softmax(batched_input, batched_mask, dim=1)
-
-    # compare the result from masked_softmax with regular softmax with filtered values
-    for input, mask, output in zip(batched_input, batched_mask, batched_output):
-        assert output[output != 0].equal(F.softmax(input[mask == 1], dim=0))
 
 
 @pytest.mark.parametrize(

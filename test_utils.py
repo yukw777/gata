@@ -1,8 +1,14 @@
 import torch
 import pytest
+import torch.nn.functional as F
 
 from preprocessor import SpacyPreprocessor, PAD, UNK
-from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
+from utils import (
+    load_fasttext,
+    masked_mean,
+    generate_square_subsequent_mask,
+    masked_softmax,
+)
 
 
 def test_load_fasttext():
@@ -56,6 +62,16 @@ def test_masked_mean():
             ]
         ).float()
     )
+
+
+def test_masked_softmax():
+    batched_input = torch.tensor([[1, 2, 3], [1, 1, 2], [3, 2, 1]]).float()
+    batched_mask = torch.tensor([[1, 1, 0], [0, 1, 1], [1, 1, 1]]).float()
+    batched_output = masked_softmax(batched_input, batched_mask, dim=1)
+
+    # compare the result from masked_softmax with regular softmax with filtered values
+    for input, mask, output in zip(batched_input, batched_mask, batched_output):
+        assert output[output != 0].equal(F.softmax(input[mask == 1], dim=0))
 
 
 @pytest.mark.parametrize("size", [1, 3, 5, 7])
