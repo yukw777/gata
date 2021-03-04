@@ -796,7 +796,7 @@ class GraphUpdater(nn.Module):
             encoded_prev_action,
             encoded_curr_graph,
             prev_action_mask,
-            torch.ones(batch_size, self.num_nodes),
+            torch.ones(batch_size, self.num_nodes, device=encoded_curr_graph.device),
         )
         # h_ag: (batch, prev_action_len, hidden_dim)
         # h_ga: (batch, num_node, hidden_dim)
