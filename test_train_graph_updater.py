@@ -1,7 +1,9 @@
 import pytest
 import torch
 
-from train_graph_updater import TextDecoderBlock, TextDecoder
+from hydra.experimental import initialize, compose
+
+from train_graph_updater import TextDecoderBlock, TextDecoder, main
 
 
 @pytest.mark.parametrize(
@@ -77,3 +79,23 @@ def test_text_decoder(
         ).size()
         == (batch_size, input_seq_len, dec_block_hidden_dim)
     )
+
+
+def test_main():
+    with initialize(config_path="train_graph_updater"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "data.train_path=test-data/test-data.json",
+                "data.train_batch_size=2",
+                "data.train_num_workers=0",
+                "data.val_path=test-data/test-data.json",
+                "data.val_batch_size=2",
+                "data.val_num_workers=0",
+                "data.test_path=test-data/test-data.json",
+                "data.test_batch_size=2",
+                "data.test_num_workers=0",
+                "+pl_trainer.fast_dev_run=true",
+            ],
+        )
+        main(cfg)

@@ -1,13 +1,17 @@
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
+import hydra
 
-from typing import List, Dict, Tuple
+from typing import List, Dict, Tuple, Optional
+from omegaconf import DictConfig, OmegaConf
+from hydra.utils import instantiate, to_absolute_path
+
 from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
-
 from preprocessor import SpacyPreprocessor
 from graph_updater import GraphUpdater, PositionalEncoderTensor2Tensor
 from optimizers import RAdam
+from graph_updater_data import GraphUpdaterObsGenDataModule
 
 
 class TextDecoderBlock(nn.Module):
@@ -179,7 +183,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def __init__(
         self,
         hidden_dim: int,
-        word_vocab_path: str,
         pretrained_word_embedding_path: str,
         word_emb_dim: int,
         node_vocab_path: str,
@@ -192,13 +195,16 @@ class GraphUpdaterObsGen(pl.LightningModule):
         text_encoder_num_heads: int,
         graph_encoder_num_cov_layers: int,
         graph_encoder_num_bases: int,
+        text_decoder_num_blocks: int,
+        text_decoder_num_heads: int,
         learning_rate: float,
+        preprocessor: SpacyPreprocessor,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
 
-        # load preprocessor
-        self.preprocessor = SpacyPreprocessor.load_from_file(word_vocab_path)
+        # preprocessor
+        self.preprocessor = preprocessor
 
         # load pretrained word embedding and freeze it
         pretrained_word_embedding = load_fasttext(
@@ -250,14 +256,159 @@ class GraphUpdaterObsGen(pl.LightningModule):
         )
         self.graph_updater.pretraining = True
 
-    def forward(self, *args, **kwargs):
-        return super().forward(*args, **kwargs)
+        # text decoder
+        self.text_decoder = TextDecoder(
+            text_decoder_num_blocks, hidden_dim, text_decoder_num_heads
+        )
+        self.target_word_prj = nn.Linear(
+            hidden_dim, len(self.preprocessor.word_to_id_dict), bias=False
+        )
+        self.ce_loss = nn.CrossEntropyLoss(
+            ignore_index=self.preprocessor.pad_id, reduction="none"
+        )
 
-    def training_step(
+    def forward(  # type: ignore
+        self,
+        episode_data: Dict[str, torch.Tensor],
+        rnn_prev_hidden: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        episode_data:
+        {
+            'obs_word_ids': tensor of shape (batch, obs_len),
+            'obs_mask': tensor of shape (batch, obs_len),
+            'prev_action_word_ids': tensor of shape (batch, prev_action_len),
+            'prev_action_mask': tensor of shape (batch, prev_action_len),
+            'groundtruth_obs_word_ids': tensor of shape (batch, obs_len),
+        }
+        rnn_prev_hidden: (batch, hidden_dim)
+
+        output:
+        {
+            'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim),
+            'batch_loss': batch loss for this episode data. (batch)
+            'pred_obs_word_ids': predicted observation word IDs.
+                (batch, obs_len),
+        }
+        """
+        # graph updater
+        graph_updater_results = self.graph_updater(
+            episode_data["obs_word_ids"],
+            episode_data["prev_action_word_ids"],
+            episode_data["obs_mask"],
+            episode_data["prev_action_mask"],
+            rnn_prev_hidden=rnn_prev_hidden,
+        )
+
+        # decode
+        decoder_output = self.text_decoder(
+            graph_updater_results["prj_obs"],
+            episode_data["obs_mask"],
+            graph_updater_results["h_ga"],
+            graph_updater_results["h_ag"],
+            episode_data["prev_action_mask"],
+        )
+        # (batch, obs_len, hidden_dim)
+        decoder_output = self.target_word_prj(decoder_output)
+        # (batch, obs_len, num_words)
+
+        batch_size = decoder_output.size(0)
+        batch_loss = (
+            self.ce_loss(
+                decoder_output.view(-1, decoder_output.size(-1)),
+                episode_data["groundtruth_obs_word_ids"].flatten(),
+            )
+            .view(batch_size, -1)
+            .sum(dim=1)
+        )
+        # (batch)
+
+        pred_obs_word_ids = (
+            decoder_output
+            * (episode_data["groundtruth_obs_word_ids"] != 0).float().unsqueeze(-1)
+        ).argmax(dim=-1)
+        # (batch, obs_len)
+
+        return {
+            "h_t": graph_updater_results["h_t"],
+            "batch_loss": batch_loss,
+            "pred_obs_word_ids": pred_obs_word_ids,
+        }
+
+    def training_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
     ) -> torch.Tensor:
-        episode_batch, episode_mask = batch
-        return super().training_step(*args, **kwargs)
+        episode_seq, episode_mask = batch
+        h_t: Optional[torch.Tensor] = None
+        losses: List[torch.Tensor] = []
+        for i, episode_data in enumerate(episode_seq):
+            results = self(episode_data, rnn_prev_hidden=h_t)
+            h_t = results["h_t"]
+            loss_mask = episode_mask[:, i]
+            losses.append(
+                (
+                    torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
+                ).unsqueeze(0)
+            )
+        return torch.cat(losses).mean()
 
     def configure_optimizers(self):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
+
+
+@hydra.main(config_path="train_graph_updater", config_name="config")
+def main(cfg: DictConfig) -> None:
+    print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
+
+    # seed
+    pl.seed_everything(42)
+
+    # set up data module
+    dm = GraphUpdaterObsGenDataModule(
+        train_path=to_absolute_path(cfg.data.train_path),
+        train_batch_size=cfg.data.train_batch_size,
+        train_num_workers=cfg.data.train_num_workers,
+        val_path=to_absolute_path(cfg.data.val_path),
+        val_batch_size=cfg.data.val_batch_size,
+        val_num_workers=cfg.data.val_num_workers,
+        test_path=to_absolute_path(cfg.data.test_path),
+        test_batch_size=cfg.data.test_batch_size,
+        test_num_workers=cfg.data.test_num_workers,
+        word_vocab_file=to_absolute_path(cfg.data.word_vocab_file),
+    )
+
+    # instantiate the lightning module
+    lm = GraphUpdaterObsGen(
+        hidden_dim=cfg.model.hidden_dim,
+        pretrained_word_embedding_path=to_absolute_path(
+            cfg.model.pretrained_word_embedding_path
+        ),
+        word_emb_dim=cfg.model.word_emb_dim,
+        node_vocab_path=to_absolute_path(cfg.model.node_vocab_path),
+        node_emb_dim=cfg.model.node_emb_dim,
+        relation_vocab_path=to_absolute_path(cfg.model.relation_vocab_path),
+        relation_emb_dim=cfg.model.relation_emb_dim,
+        text_encoder_num_blocks=cfg.model.text_encoder_num_blocks,
+        text_encoder_num_conv_layers=cfg.model.text_encoder_num_conv_layers,
+        text_encoder_kernel_size=cfg.model.text_encoder_kernel_size,
+        text_encoder_num_heads=cfg.model.text_encoder_num_heads,
+        graph_encoder_num_cov_layers=cfg.model.graph_encoder_num_cov_layers,
+        graph_encoder_num_bases=cfg.model.graph_encoder_num_bases,
+        text_decoder_num_blocks=cfg.model.text_decoder_num_blocks,
+        text_decoder_num_heads=cfg.model.text_decoder_num_heads,
+        learning_rate=cfg.train.learning_rate,
+        preprocessor=dm.preprocessor,
+    )
+
+    # trainer
+    trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
+    assert isinstance(trainer_config, dict)
+    trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
+    trainer = pl.Trainer(**trainer_config)
+
+    # fit
+    trainer.fit(lm, datamodule=dm)
+
+
+if __name__ == "__main__":
+    main()
