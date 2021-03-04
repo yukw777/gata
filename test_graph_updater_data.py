@@ -44,9 +44,11 @@ def test_graph_updater_obs_gen_data_module_prepare_batch():
     assert len(prepared_batch) == 7
     for i, episode in enumerate(prepared_batch):
         # if episode_mask == 0, all the word ids should be 0 too. (pad_id)
-        (episode["obs_word_ids"].sum(dim=1) == 0).equal(episode_mask[:, i] == 0)
-        (episode["prev_action_word_ids"].sum(dim=1) == 0).equal(episode_mask[:, i] == 0)
-        (episode["groundtruth_obs_word_ids"].sum(dim=1) == 0).equal(
+        assert (episode["obs_word_ids"].sum(dim=1) == 0).equal(episode_mask[:, i] == 0)
+        assert (episode["prev_action_word_ids"].sum(dim=1) == 0).equal(
+            episode_mask[:, i] == 0
+        )
+        assert (episode["groundtruth_obs_word_ids"].sum(dim=1) == 0).equal(
             episode_mask[:, i] == 0
         )
 

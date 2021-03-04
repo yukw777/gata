@@ -116,10 +116,16 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
                 for episode in batch
             ]
             obs_word_ids, obs_mask = self.preprocessor.preprocess_tokenized(
-                [[BOS] + padded_obs.split() for padded_obs in episode_padded_obs]
+                [
+                    [BOS] + padded_obs.split() if padded_obs != "" else []
+                    for padded_obs in episode_padded_obs
+                ]
             )
             groundtruth_obs_word_ids, _ = self.preprocessor.preprocess_tokenized(
-                [padded_obs.split() + [EOS] for padded_obs in episode_padded_obs]
+                [
+                    padded_obs.split() + [EOS] if padded_obs != "" else []
+                    for padded_obs in episode_padded_obs
+                ]
             )
 
             episode_padded_prev_actions = [
