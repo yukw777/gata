@@ -12,8 +12,8 @@ def load_fasttext(fname: str, preprocessor: SpacyPreprocessor) -> nn.Embedding:
 
         data = {}
         for line in f:
-            tokens = line.rstrip().split(" ")
-            data[tokens[0]] = map(float, tokens[1:])
+            parts = line.rstrip().split(" ", 1)
+            data[parts[0]] = parts[1]
     # embedding for pad is initalized to 0
     # embeddings for OOVs are randomly initialized from N(0, 1)
     emb = nn.Embedding(
@@ -21,7 +21,7 @@ def load_fasttext(fname: str, preprocessor: SpacyPreprocessor) -> nn.Embedding:
     )
     for word, i in preprocessor.word_to_id_dict.items():
         if word in data:
-            emb.weight[i] = torch.tensor(list(data[word]))
+            emb.weight[i] = torch.tensor(list(map(float, data[word].split())))
     return emb
 
 
