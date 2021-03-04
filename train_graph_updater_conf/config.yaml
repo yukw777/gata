@@ -29,6 +29,10 @@ model:
 
 train:
   learning_rate: 5e-4
+  sample_k_gen_obs: 5
 
 pl_trainer:
   max_epochs: 6250  # 300000 / 48
+
+defaults:
+  - logger: null

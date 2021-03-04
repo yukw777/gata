@@ -2,10 +2,13 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import hydra
+import random
+import wandb
 
 from typing import List, Dict, Tuple, Optional
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
+from pytorch_lightning.loggers import WandbLogger
 
 from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
 from preprocessor import SpacyPreprocessor
@@ -185,6 +188,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         text_decoder_num_blocks: int,
         text_decoder_num_heads: int,
         learning_rate: float,
+        sample_k_gen_obs: int,
         preprocessor: SpacyPreprocessor,
     ) -> None:
         super().__init__()
@@ -192,6 +196,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # preprocessor
         self.preprocessor = preprocessor
+
+        # sample k generated observations in val and test
+        self.sample_k_gen_obs = sample_k_gen_obs
 
         # load pretrained word embedding and freeze it
         pretrained_word_embedding = load_fasttext(
@@ -322,14 +329,16 @@ class GraphUpdaterObsGen(pl.LightningModule):
             "pred_obs_word_ids": pred_obs_word_ids,
         }
 
-    def training_step(  # type: ignore
+    def process_batch(
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> torch.Tensor:
+    ) -> Tuple[List[torch.Tensor], List[Dict[str, torch.Tensor]]]:
         episode_seq, episode_mask = batch
         h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
+        episode_results: List[Dict[str, torch.Tensor]] = []
         for i, episode_data in enumerate(episode_seq):
             results = self(episode_data, rnn_prev_hidden=h_t)
+            episode_results.append(results)
             h_t = results["h_t"]
             loss_mask = episode_mask[:, i]
             losses.append(
@@ -337,7 +346,78 @@ class GraphUpdaterObsGen(pl.LightningModule):
                     torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
                 ).unsqueeze(0)
             )
+
+        return losses, episode_results
+
+    def training_step(  # type: ignore
+        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+    ) -> torch.Tensor:
+        losses, _ = self.process_batch(batch, batch_idx)
         return torch.cat(losses).mean()
+
+    def validation_step(  # type: ignore
+        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+    ) -> List[List[str]]:
+        losses, episode_results = self.process_batch(batch, batch_idx)
+        self.log("val_loss", torch.cat(losses).mean())
+
+        # decode all the predicted observations
+        episode_seq, _ = batch
+        groundtruth_obs_word_ids = [
+            word_ids
+            for episode in episode_seq
+            for word_ids in episode["groundtruth_obs_word_ids"].tolist()
+        ]
+        pred_obs_word_ids = [
+            word_ids
+            for result in episode_results
+            for word_ids in result["pred_obs_word_ids"].tolist()
+        ]
+        return [
+            [groundtruth, generated]
+            for groundtruth, generated in zip(
+                [
+                    obs
+                    for obs in self.preprocessor.decode(groundtruth_obs_word_ids)
+                    if len(obs.split()) > 1
+                ],
+                [
+                    obs
+                    for obs in self.preprocessor.decode(pred_obs_word_ids)
+                    if len(obs.split()) > 1
+                ],
+            )
+        ]
+
+    def wandb_log_gen_obs(
+        self, outputs: List[List[List[str]]], table_title: str
+    ) -> None:
+        flat_outputs = [item for sublist in outputs for item in sublist]
+        data = (
+            random.sample(flat_outputs, self.sample_k_gen_obs)
+            if len(flat_outputs) >= self.sample_k_gen_obs
+            else flat_outputs
+        )
+        self.logger.experiment.log(
+            {table_title: wandb.Table(data=data, columns=["Groundtruth", "Generated"])}
+        )
+
+    def validation_epoch_end(self, outputs: List[List[List[str]]]) -> None:
+        if isinstance(self.logger, WandbLogger):
+            self.wandb_log_gen_obs(
+                outputs, f"Generated Observations Val Epoch {self.current_epoch}"
+            )
+
+    def test_step(  # type: ignore
+        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+    ) -> List[List[str]]:
+        return self.validation_step(batch, batch_idx)
+
+    def test_epoch_end(self, outputs: List[List[List[str]]]) -> None:
+        if isinstance(self.logger, WandbLogger):
+            self.wandb_log_gen_obs(
+                outputs, f"Generated Observations Test Epoch {self.current_epoch}"
+            )
 
     def configure_optimizers(self):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
@@ -354,9 +434,7 @@ def main(cfg: DictConfig) -> None:
     dm = GraphUpdaterObsGenDataModule(**cfg.data)
 
     # instantiate the lightning module
-    lm = GraphUpdaterObsGen(
-        **cfg.model, learning_rate=cfg.train.learning_rate, preprocessor=dm.preprocessor
-    )
+    lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
 
     # trainer
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
