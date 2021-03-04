@@ -343,7 +343,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
 
 
-@hydra.main(config_path="train_graph_updater", config_name="config")
+@hydra.main(config_path="train_graph_updater_conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
 
