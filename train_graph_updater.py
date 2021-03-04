@@ -80,37 +80,25 @@ class TextDecoderBlock(nn.Module):
         # (batch, input_seq_len, hidden_dim)
 
         # calculate self attention for the nodes and previous action
+        # strictly speaking, we should calculate attention masks for these
+        # based on input_mask, but due to this bug:
+        # https://github.com/pytorch/pytorch/issues/41508
+        # it returns nan's if we apply attention masks. So let's just skip it.
+        # It's OK, b/c we apply input_mask when we combine these.
         # apply layer norm to the input self attention output to calculate the query
         query = self.self_attn_layer_norm(input_attn).transpose(0, 1)
         # (input_seq_len, batch, hidden_dim)
 
         # self attention for the nodes
         # no key_padding_mask, since we use all the nodes
-        # attn_mask is calculated from input_mask
-        num_node = node_hidden.size(1)
-        node_attn_mask = (
-            input_mask.unsqueeze(-1)
-            .expand(-1, -1, num_node)
-            .repeat(self.num_heads, 1, 1)
-            == 0
-        )
         # (batch * num_heads, input_seq_len, num_node)
         node_hidden = node_hidden.transpose(0, 1)
-        node_attn, _ = self.node_attn(
-            query, node_hidden, node_hidden, attn_mask=node_attn_mask
-        )
+        node_attn, _ = self.node_attn(query, node_hidden, node_hidden)
         node_attn = node_attn.transpose(0, 1)
         # (batch, input_seq_len, hidden_dim)
 
         # self attention for the previous action
         # key_padding_mask is from prev_action_mask
-        # attn_mask is calculated from input_mask
-        prev_action_len = prev_action_hidden.size(1)
-        prev_action_attn_mask = (
-            input_mask.unsqueeze(-1)
-            .expand(-1, -1, prev_action_len)
-            .repeat(self.num_heads, 1, 1)
-        )
         # (batch * num_heads, input_seq_len, prev_action_len)
         prev_action_hidden = prev_action_hidden.transpose(0, 1)
         prev_action_attn, _ = self.prev_action_attn(
@@ -118,7 +106,6 @@ class TextDecoderBlock(nn.Module):
             prev_action_hidden,
             prev_action_hidden,
             key_padding_mask=prev_action_mask == 0,
-            attn_mask=prev_action_attn_mask,
         )
         prev_action_attn = prev_action_attn.transpose(0, 1)
         # (batch, input_seq_len, hidden_dim)
