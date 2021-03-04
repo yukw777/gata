@@ -195,16 +195,16 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # load pretrained word embedding and freeze it
         pretrained_word_embedding = load_fasttext(
-            pretrained_word_embedding_path, self.preprocessor
+            to_absolute_path(pretrained_word_embedding_path), self.preprocessor
         )
         pretrained_word_embedding.weight.requires_grad = False
 
         # load node vocab
-        with open(node_vocab_path, "r") as f:
+        with open(to_absolute_path(node_vocab_path), "r") as f:
             self.node_vocab = [node_name.strip() for node_name in f]
 
         # load relation vocab
-        with open(relation_vocab_path, "r") as f:
+        with open(to_absolute_path(relation_vocab_path), "r") as f:
             self.relation_vocab = [relation_name.strip() for relation_name in f]
         # add reverse relations
         self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
@@ -351,40 +351,11 @@ def main(cfg: DictConfig) -> None:
     pl.seed_everything(42)
 
     # set up data module
-    dm = GraphUpdaterObsGenDataModule(
-        train_path=to_absolute_path(cfg.data.train_path),
-        train_batch_size=cfg.data.train_batch_size,
-        train_num_workers=cfg.data.train_num_workers,
-        val_path=to_absolute_path(cfg.data.val_path),
-        val_batch_size=cfg.data.val_batch_size,
-        val_num_workers=cfg.data.val_num_workers,
-        test_path=to_absolute_path(cfg.data.test_path),
-        test_batch_size=cfg.data.test_batch_size,
-        test_num_workers=cfg.data.test_num_workers,
-        word_vocab_file=to_absolute_path(cfg.data.word_vocab_file),
-    )
+    dm = GraphUpdaterObsGenDataModule(**cfg.data)
 
     # instantiate the lightning module
     lm = GraphUpdaterObsGen(
-        hidden_dim=cfg.model.hidden_dim,
-        pretrained_word_embedding_path=to_absolute_path(
-            cfg.model.pretrained_word_embedding_path
-        ),
-        word_emb_dim=cfg.model.word_emb_dim,
-        node_vocab_path=to_absolute_path(cfg.model.node_vocab_path),
-        node_emb_dim=cfg.model.node_emb_dim,
-        relation_vocab_path=to_absolute_path(cfg.model.relation_vocab_path),
-        relation_emb_dim=cfg.model.relation_emb_dim,
-        text_encoder_num_blocks=cfg.model.text_encoder_num_blocks,
-        text_encoder_num_conv_layers=cfg.model.text_encoder_num_conv_layers,
-        text_encoder_kernel_size=cfg.model.text_encoder_kernel_size,
-        text_encoder_num_heads=cfg.model.text_encoder_num_heads,
-        graph_encoder_num_cov_layers=cfg.model.graph_encoder_num_cov_layers,
-        graph_encoder_num_bases=cfg.model.graph_encoder_num_bases,
-        text_decoder_num_blocks=cfg.model.text_decoder_num_blocks,
-        text_decoder_num_heads=cfg.model.text_decoder_num_heads,
-        learning_rate=cfg.train.learning_rate,
-        preprocessor=dm.preprocessor,
+        **cfg.model, learning_rate=cfg.train.learning_rate, preprocessor=dm.preprocessor
     )
 
     # trainer

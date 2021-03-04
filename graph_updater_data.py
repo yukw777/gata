@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 
 from typing import Optional, Dict, List, Any, Tuple
 from torch.utils.data import Dataset, DataLoader
+from hydra.utils import to_absolute_path
 
 from preprocessor import SpacyPreprocessor, PAD, BOS, EOS
 
@@ -47,17 +48,17 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
         word_vocab_file: str,
     ) -> None:
         super().__init__()
-        self.train_path = train_path
+        self.train_path = to_absolute_path(train_path)
         self.train_batch_size = train_batch_size
         self.train_num_workers = train_num_workers
-        self.val_path = val_path
+        self.val_path = to_absolute_path(val_path)
         self.val_batch_size = val_batch_size
         self.val_num_workers = val_num_workers
-        self.test_path = test_path
+        self.test_path = to_absolute_path(test_path)
         self.test_batch_size = test_batch_size
         self.test_num_workers = test_num_workers
 
-        with open(word_vocab_file, "r") as f:
+        with open(to_absolute_path(word_vocab_file), "r") as f:
             word_vocab = [word.strip() for word in f.readlines()]
         self.preprocessor = SpacyPreprocessor(word_vocab)
 
