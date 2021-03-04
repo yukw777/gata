@@ -22,6 +22,7 @@ def load_fasttext(fname: str, preprocessor: SpacyPreprocessor) -> nn.Embedding:
     for word, i in preprocessor.word_to_id_dict.items():
         if word in data:
             emb.weight[i] = torch.tensor(list(map(float, data[word].split())))
+    emb.weight.detach_()
     return emb
 
 
