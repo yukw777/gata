@@ -14,9 +14,13 @@ class SpacyPreprocessor:
     def __init__(self, word_vocab: List[str]) -> None:
         super().__init__()
         self.tokenizer = English().tokenizer
+        self.word_vocab = word_vocab
         self.word_to_id_dict = {w: i for i, w in enumerate(word_vocab)}
         self.pad_id = self.word_to_id_dict[PAD]
         self.unk_id = self.word_to_id_dict[UNK]
+
+    def id_to_word(self, word_id: int) -> str:
+        return self.word_vocab[word_id]
 
     def word_to_id(self, word: str) -> int:
         return self.word_to_id_dict.get(word, self.unk_id)
@@ -54,6 +58,18 @@ class SpacyPreprocessor:
 
     def preprocess(self, batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(s) for s in batch])
+
+    def decode(self, batch: List[List[int]]) -> List[str]:
+        return [
+            " ".join(
+                [
+                    self.id_to_word(word_id)
+                    for word_id in word_ids
+                    if word_id != self.pad_id
+                ]
+            )
+            for word_ids in batch
+        ]
 
     @classmethod
     def load_from_file(cls, word_vocab_path: str) -> "SpacyPreprocessor":
