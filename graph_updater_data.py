@@ -115,6 +115,10 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
                 episode[i]["observation"] if i < len(episode) else ""
                 for episode in batch
             ]
+
+            # we add BOS and EOS even if the observation should be masked
+            # to prevent nan from multiheaded attention which happens due to a bug
+            # https://github.com/pytorch/pytorch/issues/41508
             obs_word_ids, obs_mask = self.preprocessor.preprocess_tokenized(
                 [[BOS] + padded_obs.split() for padded_obs in episode_padded_obs]
             )

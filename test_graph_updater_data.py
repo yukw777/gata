@@ -1,6 +1,7 @@
 import torch
 
 from graph_updater_data import GraphUpdaterDataset, GraphUpdaterObsGenDataModule
+from preprocessor import BOS, EOS
 
 
 def test_graph_updater_dataset():
@@ -43,12 +44,19 @@ def test_graph_updater_obs_gen_data_module_prepare_batch():
     )
     assert len(prepared_batch) == 7
     for i, episode in enumerate(prepared_batch):
-        # if episode_mask == 0, all the word ids should be 0 too. (pad_id)
-        (episode["obs_word_ids"].sum(dim=1) == 0).equal(episode_mask[:, i] == 0)
-        (episode["prev_action_word_ids"].sum(dim=1) == 0).equal(episode_mask[:, i] == 0)
-        (episode["groundtruth_obs_word_ids"].sum(dim=1) == 0).equal(
+        # if episode_mask == 0, observations should be [<bos>, <pad>, ...]
+        assert (
+            episode["obs_word_ids"][episode_mask[:, i] == 0][:, 0]
+            == data_module.preprocessor.word_to_id(BOS)
+        ).all()
+        assert (episode["prev_action_word_ids"].sum(dim=1) == 0).equal(
             episode_mask[:, i] == 0
         )
+        # if episode_mask == 0, ground truth observations should be [<eos>, <pad>, ...]
+        assert (
+            episode["groundtruth_obs_word_ids"][episode_mask[:, i] == 0][:, 0]
+            == data_module.preprocessor.word_to_id(EOS)
+        ).all()
 
         # make sure the masks have the right dimensions
         assert episode["obs_mask"].size() == episode["obs_word_ids"].size()
