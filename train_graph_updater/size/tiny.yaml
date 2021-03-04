@@ -1,0 +1,17 @@
+data:
+  train_batch_size: 4
+  val_batch_size: 8
+  test_batch_size: 8
+
+model:
+  hidden_dim: 8
+  node_emb_dim: 12
+  relation_emb_dim: 10
+  text_encoder_num_blocks: 1
+  text_encoder_num_conv_layers: 3
+  text_encoder_kernel_size: 5
+  text_encoder_num_heads: 1
+  graph_encoder_num_cov_layers: 4
+  graph_encoder_num_bases: 3
+  text_decoder_num_blocks: 1
+  text_decoder_num_heads: 1
