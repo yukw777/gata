@@ -61,6 +61,9 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
             word_vocab = [word.strip() for word in f.readlines()]
         self.preprocessor = SpacyPreprocessor(word_vocab)
 
+    def prepare_data(self) -> None:  # type: ignore
+        pass
+
     def setup(self, stage: Optional[str] = None) -> None:
         if stage == "fit" or stage is None:
             self.train = GraphUpdaterDataset(self.train_path)
