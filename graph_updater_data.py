@@ -109,10 +109,10 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
             # Collect the observations and prev action of the i'th episode
             # and batchify them.
             # If the length of an episode is shorter than max_episode_len,
-            # just add <pad>.
+            # just add an empty string.
             # They're already tokenized, so split() is sufficient.
             episode_padded_obs = [
-                episode[i]["observation"] if i < len(episode) else PAD
+                episode[i]["observation"] if i < len(episode) else ""
                 for episode in batch
             ]
             obs_word_ids, obs_mask = self.preprocessor.preprocess_tokenized(

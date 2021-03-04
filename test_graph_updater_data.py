@@ -55,3 +55,10 @@ def test_graph_updater_obs_gen_data_module_prepare_batch():
         assert (
             episode["prev_action_mask"].size() == episode["prev_action_word_ids"].size()
         )
+
+        # the sum of mask should equal the number of nonzero word ids
+        assert (
+            torch.sum(episode["obs_word_ids"] != 0, dim=1)
+            .float()
+            .equal(episode["obs_mask"].sum(dim=1))
+        )
