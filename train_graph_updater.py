@@ -325,21 +325,21 @@ class GraphUpdaterObsGen(pl.LightningModule):
         # (batch, obs_len)
 
         return {
-            "h_t": graph_updater_results["h_t"],
+            "h_t": graph_updater_results["h_t"].detach(),
             "batch_loss": batch_loss,
-            "pred_obs_word_ids": pred_obs_word_ids,
+            "pred_obs_word_ids": pred_obs_word_ids.detach(),
         }
 
     def process_batch(
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> Tuple[List[torch.Tensor], List[Dict[str, torch.Tensor]]]:
+    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
         episode_seq, episode_mask = batch
         h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
-        episode_results: List[Dict[str, torch.Tensor]] = []
+        preds: List[torch.Tensor] = []
         for i, episode_data in enumerate(episode_seq):
             results = self(episode_data, rnn_prev_hidden=h_t)
-            episode_results.append(results)
+            preds.append(results["pred_obs_word_ids"])
             h_t = results["h_t"]
             loss_mask = episode_mask[:, i]
             losses.append(
@@ -348,7 +348,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
                 ).unsqueeze(0)
             )
 
-        return losses, episode_results
+        return losses, preds
 
     def training_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
@@ -359,7 +359,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def validation_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
     ) -> List[List[str]]:
-        losses, episode_results = self.process_batch(batch, batch_idx)
+        losses, preds = self.process_batch(batch, batch_idx)
         self.log("val_loss", torch.cat(losses).mean())
 
         # decode all the predicted observations
@@ -371,8 +371,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
         ]
         pred_obs_word_ids = [
             word_ids
-            for result in episode_results
-            for word_ids in result["pred_obs_word_ids"].tolist()
+            for pred_obs_word_ids in preds
+            for word_ids in pred_obs_word_ids.tolist()
         ]
         return [
             [groundtruth, generated]
