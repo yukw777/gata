@@ -8,6 +8,7 @@ import wandb
 from typing import List, Dict, Tuple, Optional
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 
 from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
@@ -440,7 +441,10 @@ def main(cfg: DictConfig) -> None:
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
     assert isinstance(trainer_config, dict)
     trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
-    trainer = pl.Trainer(**trainer_config)
+    trainer = pl.Trainer(
+        **trainer_config,
+        checkpoint_callback=ModelCheckpoint(monitor="val_loss", mode="min"),
+    )
 
     # fit
     trainer.fit(lm, datamodule=dm)
