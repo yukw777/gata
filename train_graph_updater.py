@@ -449,6 +449,9 @@ def main(cfg: DictConfig) -> None:
     # fit
     trainer.fit(lm, datamodule=dm)
 
+    # test
+    trainer.test(datamodule=dm)
+
 
 if __name__ == "__main__":
     main()
