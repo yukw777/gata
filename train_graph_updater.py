@@ -450,7 +450,8 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(lm, datamodule=dm)
 
     # test
-    trainer.test(datamodule=dm)
+    if cfg.train.run_test:
+        trainer.test(datamodule=dm)
 
 
 if __name__ == "__main__":
