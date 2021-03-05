@@ -22,8 +22,14 @@ class SpacyPreprocessor:
     def id_to_word(self, word_id: int) -> str:
         return self.word_vocab[word_id]
 
+    def ids_to_words(self, word_ids: List[int]) -> List[str]:
+        return [self.id_to_word(word_id) for word_id in word_ids]
+
     def word_to_id(self, word: str) -> int:
         return self.word_to_id_dict.get(word, self.unk_id)
+
+    def words_to_ids(self, words: List[str]) -> List[int]:
+        return [self.word_to_id(word) for word in words]
 
     def tokenize(self, s: str) -> List[str]:
         return [t.text.lower() for t in self.tokenizer(s)]
@@ -49,12 +55,7 @@ class SpacyPreprocessor:
     def preprocess_tokenized(
         self, tokenized_batch: List[List[str]]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.pad(
-            [
-                [self.word_to_id(token) for token in tokenized]
-                for tokenized in tokenized_batch
-            ]
-        )
+        return self.pad([self.words_to_ids(tokenized) for tokenized in tokenized_batch])
 
     def preprocess(self, batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(s) for s in batch])
@@ -62,11 +63,9 @@ class SpacyPreprocessor:
     def decode(self, batch: List[List[int]]) -> List[str]:
         return [
             " ".join(
-                [
-                    self.id_to_word(word_id)
-                    for word_id in word_ids
-                    if word_id != self.pad_id
-                ]
+                self.ids_to_words(
+                    [word_id for word_id in word_ids if word_id != self.pad_id]
+                )
             )
             for word_ids in batch
         ]
