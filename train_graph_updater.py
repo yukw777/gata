@@ -436,6 +436,9 @@ def main(cfg: DictConfig) -> None:
 
     # instantiate the lightning module
     lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
+    import pdb
+
+    pdb.set_trace()
 
     # trainer
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
@@ -450,7 +453,7 @@ def main(cfg: DictConfig) -> None:
     trainer.fit(lm, datamodule=dm)
 
     # test
-    if cfg.train.run_test:
+    if cfg.run_test:
         trainer.test(datamodule=dm)
 
 
