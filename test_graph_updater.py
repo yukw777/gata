@@ -20,70 +20,69 @@ from graph_updater import (
 
 
 @pytest.mark.parametrize(
-    "entity_input_dim,relation_input_dim,num_relations,out_dim,"
-    "num_bases,num_entity,batch_size,output_size",
+    "node_input_dim,relation_input_dim,num_relations,out_dim,"
+    "num_bases,num_nodes,batch_size",
     [
-        (10, 20, 5, 25, 3, 7, 5, (5, 7, 25)),
-        (20, 20, 10, 20, 5, 10, 3, (3, 10, 20)),
+        (10, 20, 5, 25, 3, 7, 5),
+        (20, 20, 10, 20, 5, 10, 3),
     ],
 )
 def test_r_gcn(
-    entity_input_dim,
+    node_input_dim,
     relation_input_dim,
     num_relations,
     out_dim,
     num_bases,
-    num_entity,
+    num_nodes,
     batch_size,
-    output_size,
 ):
     rgcn = RelationalGraphConvolution(
-        entity_input_dim, relation_input_dim, num_relations, out_dim, num_bases
+        node_input_dim, relation_input_dim, num_relations, out_dim, num_bases
     )
     assert (
         rgcn(
-            torch.rand(batch_size, num_entity, entity_input_dim),
+            torch.rand(batch_size, num_nodes, node_input_dim),
             torch.rand(batch_size, num_relations, relation_input_dim),
-            torch.rand(batch_size, num_relations, num_entity, num_entity),
+            torch.rand(batch_size, num_relations, num_nodes, num_nodes),
         ).size()
-        == output_size
+        == (batch_size, num_nodes, out_dim)
     )
 
 
 @pytest.mark.parametrize(
-    "entity_input_dim,relation_input_dim,num_relations,out_dim,"
-    "num_bases,num_entity,batch_size,output_size",
+    "node_input_dim,relation_input_dim,num_relations,out_dim,"
+    "num_bases,num_nodes,batch_size,output_size",
     [
         (10, 20, 5, 25, 3, 7, 5, (5, 7, 25)),
         (20, 20, 10, 20, 5, 10, 3, (3, 10, 20)),
     ],
 )
 def test_r_gcn_highway_connections(
-    entity_input_dim,
+    node_input_dim,
     relation_input_dim,
     num_relations,
     out_dim,
     num_bases,
-    num_entity,
+    num_nodes,
     batch_size,
     output_size,
 ):
     rgcn = RGCNHighwayConnections(
-        entity_input_dim, relation_input_dim, num_relations, out_dim, num_bases
+        node_input_dim, relation_input_dim, num_relations, out_dim, num_bases
     )
     assert (
         rgcn(
-            torch.rand(batch_size, num_entity, entity_input_dim),
+            torch.rand(batch_size, num_nodes, node_input_dim),
             torch.rand(batch_size, num_relations, relation_input_dim),
-            torch.rand(batch_size, num_relations, num_entity, num_entity),
+            torch.rand(batch_size, num_relations, num_nodes, num_nodes),
         ).size()
         == output_size
     )
 
 
 @pytest.mark.parametrize(
-    "entity_input_dim,relation_input_dim,num_relations,hidden_dims,"
-    "num_bases,num_entity,batch_size",
+    "node_input_dim,relation_input_dim,num_relations,hidden_dims,"
+    "num_bases,num_nodes,batch_size",
     [
         (10, 20, 5, [10, 20, 30], 3, 7, 5),
         (10, 20, 5, [30, 30, 30], 3, 7, 5),
@@ -92,24 +91,24 @@ def test_r_gcn_highway_connections(
     ],
 )
 def test_graph_encoder(
-    entity_input_dim,
+    node_input_dim,
     relation_input_dim,
     num_relations,
     hidden_dims,
     num_bases,
-    num_entity,
+    num_nodes,
     batch_size,
 ):
     graph_encoder = GraphEncoder(
-        entity_input_dim, relation_input_dim, num_relations, hidden_dims, num_bases
+        node_input_dim, relation_input_dim, num_relations, hidden_dims, num_bases
     )
     assert (
         graph_encoder(
-            torch.rand(batch_size, num_entity, entity_input_dim),
+            torch.rand(batch_size, num_nodes, node_input_dim),
             torch.rand(batch_size, num_relations, relation_input_dim),
-            torch.rand(batch_size, num_relations, num_entity, num_entity),
+            torch.rand(batch_size, num_relations, num_nodes, num_nodes),
         ).size()
-        == (batch_size, num_entity, hidden_dims[-1])
+        == (batch_size, num_nodes, hidden_dims[-1])
     )
 
 
