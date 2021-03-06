@@ -5,11 +5,12 @@ import hydra
 import random
 import wandb
 
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, cast
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from torch.optim import Optimizer
 
 from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
 from preprocessor import SpacyPreprocessor
@@ -190,6 +191,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         text_decoder_num_heads: int,
         learning_rate: float,
         sample_k_gen_obs: int,
+        steps_before_backprop: int,
         preprocessor: SpacyPreprocessor,
     ) -> None:
         super().__init__()
@@ -200,6 +202,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # sample k generated observations in val and test
         self.sample_k_gen_obs = sample_k_gen_obs
+
+        # how many steps before backprop
+        self.steps_before_backprop = steps_before_backprop
 
         # load pretrained word embedding and freeze it
         pretrained_word_embedding = load_fasttext(
@@ -281,8 +286,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
         output:
         {
             'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim),
-            'batch_loss': batch loss for this episode data. (batch)
-            'pred_obs_word_ids': predicted observation word IDs.
+            'batch_loss': batch loss for this episode data. (batch),
+            'pred_obs_word_ids': predicted observation word IDs. Only for eval.
                 (batch, obs_len),
         }
         """
@@ -318,21 +323,55 @@ class GraphUpdaterObsGen(pl.LightningModule):
         )
         # (batch)
 
-        pred_obs_word_ids = (
-            decoder_output
-            * (episode_data["groundtruth_obs_word_ids"] != 0).float().unsqueeze(-1)
-        ).argmax(dim=-1)
-        # (batch, obs_len)
-
-        return {
+        results = {
             "h_t": graph_updater_results["h_t"].detach(),
             "batch_loss": batch_loss,
-            "pred_obs_word_ids": pred_obs_word_ids.detach(),
         }
 
-    def process_batch(
+        if self.training:
+            return results
+
+        results["pred_obs_word_ids"] = (
+            (
+                decoder_output
+                * (episode_data["groundtruth_obs_word_ids"] != 0).float().unsqueeze(-1)
+            )
+            .argmax(dim=-1)
+            .detach()
+        )
+        # (batch, obs_len)
+
+        return results
+
+    def training_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> Tuple[List[torch.Tensor], List[torch.Tensor]]:
+    ) -> None:
+        # we only have one optimizer
+        opt = cast(Optimizer, self.optimizers())
+
+        episode_seq, episode_mask = batch
+        h_t: Optional[torch.Tensor] = None
+        losses: List[torch.Tensor] = []
+        for i, episode_data in enumerate(episode_seq):
+            results = self(episode_data, rnn_prev_hidden=h_t)
+            h_t = results["h_t"]
+            loss_mask = episode_mask[:, i]
+            losses.append(
+                (
+                    torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
+                ).unsqueeze(0)
+            )
+            # manually backprop at every steps_before_backprop steps or the last step
+            # this is to save GPU memory
+            if len(losses) == self.steps_before_backprop or i == len(episode_seq) - 1:
+                self.manual_backward(torch.cat(losses).mean())
+                opt.step()
+                opt.zero_grad()
+                losses = []
+
+    def validation_step(  # type: ignore
+        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+    ) -> List[List[str]]:
         episode_seq, episode_mask = batch
         h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
@@ -347,19 +386,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
                     torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
                 ).unsqueeze(0)
             )
-
-        return losses, preds
-
-    def training_step(  # type: ignore
-        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> torch.Tensor:
-        losses, _ = self.process_batch(batch, batch_idx)
-        return torch.cat(losses).mean()
-
-    def validation_step(  # type: ignore
-        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> List[List[str]]:
-        losses, preds = self.process_batch(batch, batch_idx)
         self.log("val_loss", torch.cat(losses).mean())
 
         # decode all the predicted observations
@@ -436,6 +462,9 @@ def main(cfg: DictConfig) -> None:
 
     # instantiate the lightning module
     lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
+    # we need to perform multiple backward steps in a single training step
+    # so turn automatic optimizatin off
+    lm.automatic_optimization = False
 
     # trainer
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
