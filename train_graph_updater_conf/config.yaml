@@ -3,10 +3,10 @@ data:
   train_batch_size: 48
   train_num_workers: 4
   val_path: data/obs_gen.0.1/valid.json
-  val_batch_size: 48
+  val_batch_size: 128
   val_num_workers: 4
   test_path: data/obs_gen.0.1/test.json
-  test_batch_size: 48
+  test_batch_size: 128
   test_num_workers: 4
   word_vocab_file: vocabs/word_vocab.txt
 
