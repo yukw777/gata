@@ -370,7 +370,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         results = {"losses": losses}
         if training:
-            yield results
+            if len(losses) != 0:
+                yield results
             return
         results["preds"] = preds
         yield results
