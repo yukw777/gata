@@ -370,9 +370,10 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         results = {"losses": losses}
         if training:
-            return results
+            yield results
+            return
         results["preds"] = preds
-        return results
+        yield results
 
     def training_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
@@ -387,13 +388,25 @@ class GraphUpdaterObsGen(pl.LightningModule):
             opt.step()
             opt.zero_grad()
 
+    def eval_step(
+        self,
+        batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor],
+        loss_log_key: str,
+    ) -> List[Tuple[str, str]]:
+        losses: List[torch.Tensor] = []
+        preds: List[torch.Tensor] = []
+
+        for results in self.process_batch(batch):
+            losses.extend(results["losses"])
+            preds.extend(results["preds"])
+
+        self.log(loss_log_key, torch.cat(losses).mean())
+        return self.gen_decoded_groundtruth_pred_pairs(batch[0], preds)
+
     def validation_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
     ) -> List[Tuple[str, str]]:
-        for results in self.process_batch(batch):
-            self.log("val_loss", torch.cat(results["losses"]).mean())
-
-            return self.gen_decoded_groundtruth_pred_pairs(batch[0], results["preds"])
+        return self.eval_step(batch, "val_loss")
 
     def gen_decoded_groundtruth_pred_pairs(
         self, episode_seq: List[Dict[str, torch.Tensor]], preds: List[torch.Tensor]
@@ -447,10 +460,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def test_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
     ) -> List[Tuple[str, str]]:
-        for results in self.process_batch(batch):
-            self.log("test_loss", torch.cat(results["losses"]).mean())
-
-            return self.gen_decoded_groundtruth_pred_pairs(batch[0], results["preds"])
+        return self.eval_step(batch, "test_loss")
 
     def test_epoch_end(self, outputs: List[List[List[str]]]) -> None:
         if isinstance(self.logger, WandbLogger):
