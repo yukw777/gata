@@ -51,6 +51,34 @@ def test_r_gcn(
 
 @pytest.mark.parametrize(
     "node_input_dim,relation_input_dim,num_relations,out_dim,"
+    "num_bases,num_nodes,batch_size",
+    [
+        (10, 20, 5, 25, 3, 7, 5),
+        (20, 20, 10, 20, 5, 10, 3),
+    ],
+)
+def test_r_gcn_get_supports(
+    node_input_dim,
+    relation_input_dim,
+    num_relations,
+    out_dim,
+    num_bases,
+    num_nodes,
+    batch_size,
+):
+    rgcn = RelationalGraphConvolution(
+        node_input_dim, relation_input_dim, num_relations, out_dim, num_bases
+    )
+    node_features = torch.rand(batch_size, num_nodes, node_input_dim)
+    relation_features = torch.rand(batch_size, num_relations, relation_input_dim)
+    adj = torch.rand(batch_size, num_relations, num_nodes, num_nodes)
+    assert rgcn.get_supports(node_features, relation_features, adj).equal(
+        rgcn.optimized_get_supports(node_features, relation_features, adj)
+    )
+
+
+@pytest.mark.parametrize(
+    "node_input_dim,relation_input_dim,num_relations,out_dim,"
     "num_bases,num_nodes,batch_size,output_size",
     [
         (10, 20, 5, 25, 3, 7, 5, (5, 7, 25)),

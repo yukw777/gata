@@ -43,7 +43,7 @@ class RelationalGraphConvolution(nn.Module):
         self.bias.data.fill_(0)
         torch.nn.init.xavier_uniform_(self.weight.weight.data)
 
-    def forward(
+    def optimized_get_supports(
         self,
         node_features: torch.Tensor,
         relation_features: torch.Tensor,
@@ -54,10 +54,43 @@ class RelationalGraphConvolution(nn.Module):
         relation_features: (batch, num_relation, relation_input_dim)
         adj: (batch, num_relations, num_node, num_node)
 
-        output: (batch, num_node, out_dim)
+        output: (batch, num_node, (node_input_dim+relation_input_dim)*num_relations)
+        """
+        batch_size = node_features.size(0)
+        num_node = node_features.size(1)
+
+        expanded_r_features = relation_features.unsqueeze(2).expand(
+            -1, -1, num_node, -1
+        )
+        # (batch, num_relation, num_node, relation_input_dim)
+        expanded_n_features = node_features.unsqueeze(1).expand(
+            -1, self.num_relations, -1, -1
+        )
+        # (batch, num_relation, num_node, node_input_dim)
+        combined_node_features = torch.cat(
+            [expanded_n_features, expanded_r_features], dim=-1
+        )
+        # (batch, num_relation, num_node, node_input_dim + relation_input_dim)
+        supports = torch.matmul(adj, combined_node_features)
+        # (batch, num_relation, num_node, node_input_dim + relation_input_dim)
+        return supports.transpose(1, 2).reshape(batch_size, num_node, -1)
+        # (batch, num_node, (node_input_dim+relation_input_dim)*num_relations)
+
+    def get_supports(
+        self,
+        node_features: torch.Tensor,
+        relation_features: torch.Tensor,
+        adj: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        node_features: (batch, num_node, node_input_dim)
+        relation_features: (batch, num_relation, relation_input_dim)
+        adj: (batch, num_relations, num_node, num_node)
+
+        output: (batch, num_node, num_bases)
         """
         support_list: List[torch.Tensor] = []
-        # TODO: see if we can vectorize this loop
+
         # for each relation
         for relation_idx in range(self.num_relations):
             # get the features for the current relation (relation_idx)
@@ -76,13 +109,31 @@ class RelationalGraphConvolution(nn.Module):
                 )
             )
         # (batch, num_node, (node_input_dim+relation_input_dim)*num_relations)
-        supports = torch.cat(support_list, dim=-1)
+        return torch.cat(support_list, dim=-1)
         # (batch, num_node, num_bases)
+
+    def forward(
+        self,
+        node_features: torch.Tensor,
+        relation_features: torch.Tensor,
+        adj: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        node_features: (batch, num_node, node_input_dim)
+        relation_features: (batch, num_relation, relation_input_dim)
+        adj: (batch, num_relations, num_node, num_node)
+
+        output: (batch, num_node, out_dim)
+        """
+        supports = self.optimized_get_supports(node_features, relation_features, adj)
+        # (batch, num_node, (node_input_dim+relation_input_dim)*num_relations)
         supports = self.bottleneck_layer(supports)
-        # (batch, num_node, out_dim)
+        # (batch, num_node, num_bases)
         output = self.weight(supports)
+        # (batch, num_node, out_dim)
 
         return self.activation(output + self.bias)
+        # (batch, num_node, out_dim)
 
 
 class RGCNHighwayConnections(RelationalGraphConvolution):
