@@ -95,7 +95,6 @@ def test_main():
                 "data.test_path=test-data/test-data.json",
                 "data.test_batch_size=2",
                 "data.test_num_workers=0",
-                "+model_size=tiny",
                 "+pl_trainer.fast_dev_run=true",
             ],
         )
