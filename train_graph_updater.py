@@ -5,6 +5,7 @@ import hydra
 import random
 import wandb
 
+from urllib.parse import urlparse
 from typing import List, Dict, Tuple, Optional, cast, Iterator
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
@@ -488,15 +489,6 @@ def main(cfg: DictConfig) -> None:
     # seed
     pl.seed_everything(42)
 
-    # set up data module
-    dm = GraphUpdaterObsGenDataModule(**cfg.data)
-
-    # instantiate the lightning module
-    lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
-    # we need to perform multiple backward steps in a single training step
-    # so turn automatic optimizatin off
-    lm.automatic_optimization = False
-
     # trainer
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
     assert isinstance(trainer_config, dict)
@@ -508,12 +500,32 @@ def main(cfg: DictConfig) -> None:
         checkpoint_callback=ModelCheckpoint(monitor="val_loss", mode="min"),
     )
 
-    # fit
-    trainer.fit(lm, datamodule=dm)
+    # set up data module
+    dm = GraphUpdaterObsGenDataModule(**cfg.data)
 
     # test
-    if cfg.run_test:
-        trainer.test(datamodule=dm)
+    if cfg.test.run_test:
+        assert (
+            cfg.test.checkpoint_path is not None
+        ), "missing checkpoint path for testing"
+        parsed = urlparse(cfg.test.checkpoint_path)
+        if parsed.scheme == "":
+            # local path
+            ckpt_path = to_absolute_path(cfg.test.checkpoint_path)
+        else:
+            # remote path
+            ckpt_path = cfg.test.checkpoint_path
+        model = GraphUpdaterObsGen.load_from_checkpoint(ckpt_path)
+        trainer.test(model=model, datamodule=dm)
+    else:
+        # instantiate the lightning module
+        lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
+        # we need to perform multiple backward steps in a single training step
+        # so turn automatic optimizatin off
+        lm.automatic_optimization = False
+
+        # fit
+        trainer.fit(lm, datamodule=dm)
 
 
 if __name__ == "__main__":
