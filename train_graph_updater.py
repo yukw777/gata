@@ -224,9 +224,12 @@ class GraphUpdaterObsGen(pl.LightningModule):
         self.test_f1 = pl.metrics.F1(num_words)
 
         # load pretrained word embedding and freeze it
-        pretrained_word_embedding = load_fasttext(
-            to_absolute_path(pretrained_word_embedding_path), self.preprocessor
-        )
+        if pretrained_word_embedding_path is not None:
+            pretrained_word_embedding = load_fasttext(
+                to_absolute_path(pretrained_word_embedding_path), self.preprocessor
+            )
+        else:
+            pretrained_word_embedding = nn.Embedding(num_words, word_emb_dim)
         pretrained_word_embedding.weight.requires_grad = False
 
         # load node vocab
