@@ -99,3 +99,19 @@ def test_main():
             ],
         )
         main(cfg)
+
+
+def test_main_test():
+    with initialize(config_path="train_graph_updater_conf"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "data.test_path=test-data/test-data.json",
+                "data.test_batch_size=2",
+                "data.test_num_workers=0",
+                "eval.run_test=true",
+                "eval.checkpoint_path=test-data/test.ckpt",
+                "+pl_trainer.limit_test_batches=1",
+            ],
+        )
+        main(cfg)

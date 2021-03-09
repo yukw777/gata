@@ -13,8 +13,13 @@ from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Optimizer
 
-from utils import load_fasttext, masked_mean, generate_square_subsequent_mask
-from preprocessor import SpacyPreprocessor
+from utils import (
+    load_fasttext,
+    masked_mean,
+    generate_square_subsequent_mask,
+    calculate_seq_f1,
+)
+from preprocessor import SpacyPreprocessor, BOS, EOS
 from graph_updater import GraphUpdater, PositionalEncoderTensor2Tensor
 from optimizers import RAdam
 from graph_updater_data import GraphUpdaterObsGenDataModule
@@ -72,11 +77,11 @@ class TextDecoderBlock(nn.Module):
         input_residual = pos_encoded_input
         # MultiheadAttention expects batch dim to be 1 for q, k, v
         # but 0 for key_padding_mask, so we need to transpose
-        pos_encoded_input = pos_encoded_input.transpose(0, 1)
+        transposed_pos_encoded_input = pos_encoded_input.transpose(0, 1)
         input_attn, _ = self.self_attn(
-            pos_encoded_input,
-            pos_encoded_input,
-            pos_encoded_input,
+            transposed_pos_encoded_input,
+            transposed_pos_encoded_input,
+            transposed_pos_encoded_input,
             key_padding_mask=input_mask == 0,
             attn_mask=attn_mask,
         )
@@ -98,19 +103,21 @@ class TextDecoderBlock(nn.Module):
         # self attention for the nodes
         # no key_padding_mask, since we use all the nodes
         # (batch * num_heads, input_seq_len, num_node)
-        node_hidden = node_hidden.transpose(0, 1)
-        node_attn, _ = self.node_attn(query, node_hidden, node_hidden)
+        transposed_node_hidden = node_hidden.transpose(0, 1)
+        node_attn, _ = self.node_attn(
+            query, transposed_node_hidden, transposed_node_hidden
+        )
         node_attn = node_attn.transpose(0, 1)
         # (batch, input_seq_len, hidden_dim)
 
         # self attention for the previous action
         # key_padding_mask is from prev_action_mask
         # (batch * num_heads, input_seq_len, prev_action_len)
-        prev_action_hidden = prev_action_hidden.transpose(0, 1)
+        transposed_prev_action_hidden = prev_action_hidden.transpose(0, 1)
         prev_action_attn, _ = self.prev_action_attn(
             query,
-            prev_action_hidden,
-            prev_action_hidden,
+            transposed_prev_action_hidden,
+            transposed_prev_action_hidden,
             key_padding_mask=prev_action_mask == 0,
         )
         prev_action_attn = prev_action_attn.transpose(0, 1)
@@ -194,6 +201,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         sample_k_gen_obs: int,
         steps_before_backprop: int,
         preprocessor: SpacyPreprocessor,
+        max_decode_len: int = 200,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -206,6 +214,14 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # how many steps before backprop
         self.steps_before_backprop = steps_before_backprop
+
+        # max decode length for greedy decoding
+        self.max_decode_len = max_decode_len
+
+        # f1 scores for decoded obs
+        num_words = len(self.preprocessor.word_to_id_dict)
+        self.val_f1 = pl.metrics.F1(num_words)
+        self.test_f1 = pl.metrics.F1(num_words)
 
         # load pretrained word embedding and freeze it
         pretrained_word_embedding = load_fasttext(
@@ -261,9 +277,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         self.text_decoder = TextDecoder(
             text_decoder_num_blocks, hidden_dim, text_decoder_num_heads
         )
-        self.target_word_prj = nn.Linear(
-            hidden_dim, len(self.preprocessor.word_to_id_dict), bias=False
-        )
+        self.target_word_prj = nn.Linear(hidden_dim, num_words, bias=False)
         self.ce_loss = nn.CrossEntropyLoss(
             ignore_index=self.preprocessor.pad_id, reduction="none"
         )
@@ -289,6 +303,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
             'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim),
             'batch_loss': batch loss for this episode data. (batch),
             'pred_obs_word_ids': predicted observation word IDs. Only for eval.
+                (batch, obs_len),
+            'decoded_obs_word_ids': decoded observation word IDs. Only for eval.
                 (batch, obs_len),
         }
         """
@@ -341,8 +357,74 @@ class GraphUpdaterObsGen(pl.LightningModule):
             .detach()
         )
         # (batch, obs_len)
+        results["decoded_obs_word_ids"] = self.greedy_decode(
+            graph_updater_results["h_ga"],
+            graph_updater_results["h_ag"],
+            episode_data["prev_action_mask"],
+        )
+        # (batch, obs_len)
 
         return results
+
+    def greedy_decode(
+        self,
+        node_hidden: torch.Tensor,
+        prev_action_hidden: torch.Tensor,
+        prev_action_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Start with "bos" and greedy decode.
+        node_hidden: (batch, num_node, hidden_dim)
+        prev_action_hidden: (batch, prev_action_len, hidden_dim)
+        prev_action_mask: (batch, prev_action_len)
+
+        output: (batch, obs_len)
+        """
+        # start with bos tokens
+        batch_size = node_hidden.size(0)
+        bos_id = self.preprocessor.word_to_id(BOS)
+        decoded_word_ids = torch.tensor(
+            [[bos_id] for _ in range(batch_size)], device=self.device
+        )
+        # (batch, 1)
+        eos_id = self.preprocessor.word_to_id(EOS)
+        eos_mask = torch.tensor([False] * batch_size, device=self.device)
+        # (batch)
+        for _ in range(self.max_decode_len):
+            input = self.graph_updater.text_encoder.word_emb_prj(
+                self.graph_updater.word_embeddings(decoded_word_ids)
+            )
+            # (batch, curr_decode_len, hidden_dim)
+            input_mask = decoded_word_ids.ne(self.preprocessor.pad_id).float()
+            # (batch, curr_decode_len)
+            decoder_output = self.target_word_prj(
+                self.text_decoder(
+                    input, input_mask, node_hidden, prev_action_hidden, prev_action_mask
+                )
+            )
+            # (batch, curr_decode_len, num_words)
+            preds = decoder_output[:, -1].argmax(dim=-1)
+            # (batch)
+
+            # add new decoded words to decoded_word_ids
+            # if we've hit eos, we add padding
+            decoded_word_ids = torch.cat(
+                [
+                    decoded_word_ids,
+                    preds.masked_fill(eos_mask, self.preprocessor.pad_id).unsqueeze(-1),
+                ],
+                dim=-1,
+            )
+            # (batch, curr_decode_len + 1)
+
+            # update the eos_mask. once it's True b/c we hit eos, it never goes back.
+            eos_mask = eos_mask.logical_or(preds == eos_id)
+            # (batch)
+
+            # if all the sequences have reached eos, break
+            if eos_mask.all():
+                break
+        return decoded_word_ids
 
     def process_batch(
         self,
@@ -352,7 +434,10 @@ class GraphUpdaterObsGen(pl.LightningModule):
         episode_seq, episode_mask = batch
         h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
+        f1s: List[torch.Tensor] = []
         preds: List[torch.Tensor] = []
+        decoded: List[torch.Tensor] = []
+        eos_id = self.preprocessor.word_to_id(EOS)
         for i, episode_data in enumerate(episode_seq):
             results = self(episode_data, rnn_prev_hidden=h_t)
             h_t = results["h_t"]
@@ -364,6 +449,39 @@ class GraphUpdaterObsGen(pl.LightningModule):
             )
             if not training:
                 preds.append(results["pred_obs_word_ids"])
+                decoded.append(results["decoded_obs_word_ids"])
+                for j, (
+                    padded_decoded_word_ids,
+                    padded_groundtruth_word_ids,
+                ) in enumerate(
+                    zip(
+                        results["decoded_obs_word_ids"].tolist(),
+                        episode_data["groundtruth_obs_word_ids"].tolist(),
+                    ),
+                ):
+                    if episode_mask[j, i] == 0:
+                        # if episode is masked, skip
+                        continue
+
+                    # cut at eos
+                    try:
+                        decoded_eos_id = padded_decoded_word_ids.index(eos_id)
+                    except ValueError:
+                        decoded_eos_id = -1
+                    try:
+                        groundtruth_eos_id = padded_groundtruth_word_ids.index(eos_id)
+                    except ValueError:
+                        groundtruth_eos_id = -1
+
+                    # calculate f1
+                    f1s.append(
+                        torch.tensor(
+                            calculate_seq_f1(
+                                padded_decoded_word_ids[:decoded_eos_id],
+                                padded_groundtruth_word_ids[:groundtruth_eos_id],
+                            )
+                        )
+                    )
 
             if training and (len(losses) == self.steps_before_backprop):
                 yield {"losses": losses}
@@ -375,6 +493,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
                 yield results
             return
         results["preds"] = preds
+        results["decoded"] = decoded
+        results["f1s"] = f1s
         yield results
 
     def training_step(  # type: ignore
@@ -393,26 +513,36 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def eval_step(
         self,
         batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor],
-        loss_log_key: str,
-    ) -> List[Tuple[str, str]]:
+        log_key_prefix: str,
+    ) -> List[Tuple[str, str, str]]:
+        episode_seq, _ = batch
+
         losses: List[torch.Tensor] = []
         preds: List[torch.Tensor] = []
+        decoded: List[torch.Tensor] = []
+        f1s: List[torch.Tensor] = []
 
         for results in self.process_batch(batch):
             losses.extend(results["losses"])
             preds.extend(results["preds"])
+            decoded.extend(results["decoded"])
+            f1s.extend(results["f1s"])
 
-        self.log(loss_log_key, torch.cat(losses).mean())
-        return self.gen_decoded_groundtruth_pred_pairs(batch[0], preds)
+        self.log(log_key_prefix + "loss", torch.cat(losses).mean())
+        self.log(log_key_prefix + "f1", torch.stack(f1s).mean())
+        return self.gen_decoded_groundtruth_pred_table(episode_seq, preds, decoded)
 
     def validation_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> List[Tuple[str, str]]:
-        return self.eval_step(batch, "val_loss")
+    ) -> List[Tuple[str, str, str]]:
+        return self.eval_step(batch, "val_")
 
-    def gen_decoded_groundtruth_pred_pairs(
-        self, episode_seq: List[Dict[str, torch.Tensor]], preds: List[torch.Tensor]
-    ) -> List[Tuple[str, str]]:
+    def gen_decoded_groundtruth_pred_table(
+        self,
+        episode_seq: List[Dict[str, torch.Tensor]],
+        preds: List[torch.Tensor],
+        decoded: List[torch.Tensor],
+    ) -> List[Tuple[str, str, str]]:
 
         groundtruth_obs_word_ids = [
             word_ids
@@ -425,6 +555,12 @@ class GraphUpdaterObsGen(pl.LightningModule):
             for pred_obs_word_ids in preds
             for word_ids in pred_obs_word_ids.tolist()
         ]
+        # decode all the decoded observations
+        decoded_obs_word_ids = [
+            word_ids
+            for decoded_obs_word_ids in preds
+            for word_ids in decoded_obs_word_ids.tolist()
+        ]
         return list(
             zip(
                 [
@@ -435,6 +571,11 @@ class GraphUpdaterObsGen(pl.LightningModule):
                 [
                     obs
                     for obs in self.preprocessor.decode(pred_obs_word_ids)
+                    if len(obs.split()) > 1
+                ],
+                [
+                    obs
+                    for obs in self.preprocessor.decode(decoded_obs_word_ids)
                     if len(obs.split()) > 1
                 ],
             )
@@ -450,7 +591,11 @@ class GraphUpdaterObsGen(pl.LightningModule):
             else flat_outputs
         )
         self.logger.experiment.log(
-            {table_title: wandb.Table(data=data, columns=["Groundtruth", "Generated"])}
+            {
+                table_title: wandb.Table(
+                    data=data, columns=["Groundtruth", "Predicted", "Decoded"]
+                )
+            }
         )
 
     def validation_epoch_end(self, outputs: List[List[List[str]]]) -> None:
@@ -461,8 +606,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
     def test_step(  # type: ignore
         self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> List[Tuple[str, str]]:
-        return self.eval_step(batch, "test_loss")
+    ) -> List[Tuple[str, str, str]]:
+        return self.eval_step(batch, "test_")
 
     def test_epoch_end(self, outputs: List[List[List[str]]]) -> None:
         if isinstance(self.logger, WandbLogger):
@@ -504,22 +649,27 @@ def main(cfg: DictConfig) -> None:
     dm = GraphUpdaterObsGenDataModule(**cfg.data)
 
     # test
-    if cfg.test.run_test:
+    if cfg.eval.run_test:
         assert (
-            cfg.test.checkpoint_path is not None
+            cfg.eval.checkpoint_path is not None
         ), "missing checkpoint path for testing"
-        parsed = urlparse(cfg.test.checkpoint_path)
+        parsed = urlparse(cfg.eval.checkpoint_path)
         if parsed.scheme == "":
             # local path
-            ckpt_path = to_absolute_path(cfg.test.checkpoint_path)
+            ckpt_path = to_absolute_path(cfg.eval.checkpoint_path)
         else:
             # remote path
-            ckpt_path = cfg.test.checkpoint_path
+            ckpt_path = cfg.eval.checkpoint_path
         model = GraphUpdaterObsGen.load_from_checkpoint(ckpt_path)
         trainer.test(model=model, datamodule=dm)
     else:
         # instantiate the lightning module
-        lm = GraphUpdaterObsGen(**cfg.model, **cfg.train, preprocessor=dm.preprocessor)
+        lm = GraphUpdaterObsGen(
+            **cfg.model,
+            **cfg.train,
+            max_decode_len=cfg.eval.max_decode_len,
+            preprocessor=dm.preprocessor,
+        )
         # we need to perform multiple backward steps in a single training step
         # so turn automatic optimizatin off
         lm.automatic_optimization = False

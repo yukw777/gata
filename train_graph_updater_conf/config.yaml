@@ -35,9 +35,10 @@ train:
 pl_trainer:
   max_epochs: 6250  # 300000 / 48
 
-test:
+eval:
   run_test: false
   checkpoint_path: null
+  max_decode_len: 200
 
 defaults:
   - logger: null
