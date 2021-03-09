@@ -112,6 +112,7 @@ def test_main_test():
                 "data.test_num_workers=0",
                 "eval.run_test=true",
                 "eval.checkpoint_path=test-data/test.ckpt",
+                "+model_size=tiny",
                 "+pl_trainer.limit_test_batches=1",
             ],
         )
