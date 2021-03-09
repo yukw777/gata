@@ -8,6 +8,7 @@ from utils import (
     masked_mean,
     generate_square_subsequent_mask,
     masked_softmax,
+    calculate_seq_f1,
 )
 
 
@@ -79,3 +80,16 @@ def test_generate_subsequent_mask(size):
     mask = generate_square_subsequent_mask(size)
     # assert that the sum of tril and triu is the original mask
     assert mask.equal(torch.tril(mask) + torch.triu(mask, diagonal=1))
+
+
+@pytest.mark.parametrize(
+    "preds,groundtruth,expected",
+    [
+        ([1, 2, 3, 4, 5], [1, 2, 3, 4, 5], 1.0),
+        ([1, 2, 3, 4, 5], [5, 4, 3, 2, 1], 1.0),
+        ([1, 2, 3], [1, 2], 0.8),
+        ([1, 2, 3], [5, 4], 0.0),
+    ],
+)
+def test_calculate_seq_f1(preds, groundtruth, expected):
+    assert calculate_seq_f1(preds, groundtruth) == expected

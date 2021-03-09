@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional
+from typing import Optional, List
+from collections import Counter
+
 from preprocessor import SpacyPreprocessor
 
 
@@ -56,3 +58,21 @@ def generate_square_subsequent_mask(size: int) -> torch.Tensor:
      [False, False, False]]
     """
     return torch.triu(torch.ones(size, size) == 1, diagonal=1)
+
+
+def calculate_seq_f1(
+    pred_obs_word_ids: List[int], ground_truth_obs_word_ids: List[int]
+) -> float:
+    """
+    Taken from the original GATA code and modified.
+    """
+    if pred_obs_word_ids == ground_truth_obs_word_ids:
+        return 1.0
+    common = Counter(pred_obs_word_ids) & Counter(ground_truth_obs_word_ids)
+    num_same = sum(common.values())
+    if num_same == 0:
+        return 0.0
+    precision = 1.0 * num_same / len(pred_obs_word_ids)
+    recall = 1.0 * num_same / len(ground_truth_obs_word_ids)
+    f1 = (2 * precision * recall) / (precision + recall)
+    return f1
