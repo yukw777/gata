@@ -183,7 +183,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def __init__(
         self,
         hidden_dim: int,
-        pretrained_word_embedding_path: str,
         word_emb_dim: int,
         node_vocab_path: str,
         node_emb_dim: int,
@@ -202,6 +201,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         steps_before_backprop: int,
         preprocessor: SpacyPreprocessor,
         max_decode_len: int = 200,
+        pretrained_word_embedding_path: Optional[str] = None,
     ) -> None:
         super().__init__()
         self.save_hyperparameters()
@@ -663,7 +663,10 @@ def main(cfg: DictConfig) -> None:
         else:
             # remote path
             ckpt_path = cfg.eval.checkpoint_path
-        model = GraphUpdaterObsGen.load_from_checkpoint(ckpt_path)
+        model = GraphUpdaterObsGen.load_from_checkpoint(
+            ckpt_path,
+            pretrained_word_embedding_path=None,  # this is saved in state dict
+        )
         trainer.test(model=model, datamodule=dm)
     else:
         # instantiate the lightning module
