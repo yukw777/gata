@@ -3,7 +3,8 @@ import torch
 
 from hydra.experimental import initialize, compose
 
-from train_graph_updater import TextDecoderBlock, TextDecoder, main
+from train_graph_updater import TextDecoderBlock, TextDecoder, main, GraphUpdaterObsGen
+from preprocessor import PAD, UNK, BOS, EOS
 
 
 @pytest.mark.parametrize(
@@ -81,6 +82,24 @@ def test_text_decoder(
     )
 
 
+def test_graph_updater_obs_gen_default_init():
+    g = GraphUpdaterObsGen()
+    default_word_vocab = [PAD, UNK, BOS, EOS]
+    assert g.preprocessor.word_vocab == default_word_vocab
+    assert g.graph_updater.word_embeddings.weight.size() == (
+        len(default_word_vocab),
+        g.hparams.word_emb_dim,
+    )
+    assert g.graph_updater.node_name_embeddings.size() == (
+        1,
+        g.hparams.word_emb_dim,
+    )
+    assert g.graph_updater.relation_name_embeddings.size() == (
+        2,
+        g.hparams.word_emb_dim,
+    )
+
+
 def test_main():
     with initialize(config_path="train_graph_updater_conf"):
         cfg = compose(
@@ -95,7 +114,7 @@ def test_main():
                 "data.test_path=test-data/test-data.json",
                 "data.test_batch_size=2",
                 "data.test_num_workers=0",
-                "+model_size=tiny",
+                "model_size=tiny",
                 "+pl_trainer.fast_dev_run=true",
             ],
         )
@@ -112,7 +131,7 @@ def test_main_test():
                 "data.test_num_workers=0",
                 "eval.run_test=true",
                 "eval.checkpoint_path=test-data/test.ckpt",
-                "+model_size=tiny",
+                "model_size=tiny",
                 "+pl_trainer.limit_test_batches=1",
             ],
         )

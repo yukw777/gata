@@ -19,7 +19,7 @@ from utils import (
     generate_square_subsequent_mask,
     calculate_seq_f1,
 )
-from preprocessor import SpacyPreprocessor, BOS, EOS
+from preprocessor import SpacyPreprocessor, BOS, EOS, PAD, UNK
 from graph_updater import GraphUpdater, PositionalEncoderTensor2Tensor
 from optimizers import RAdam
 from graph_updater_data import GraphUpdaterObsGenDataModule
@@ -182,32 +182,53 @@ class TextDecoder(nn.Module):
 class GraphUpdaterObsGen(pl.LightningModule):
     def __init__(
         self,
-        hidden_dim: int,
-        word_emb_dim: int,
-        node_vocab_path: str,
-        node_emb_dim: int,
-        relation_vocab_path: str,
-        relation_emb_dim: int,
-        text_encoder_num_blocks: int,
-        text_encoder_num_conv_layers: int,
-        text_encoder_kernel_size: int,
-        text_encoder_num_heads: int,
-        graph_encoder_num_cov_layers: int,
-        graph_encoder_num_bases: int,
-        text_decoder_num_blocks: int,
-        text_decoder_num_heads: int,
-        learning_rate: float,
-        sample_k_gen_obs: int,
-        steps_before_backprop: int,
-        preprocessor: SpacyPreprocessor,
+        hidden_dim: int = 8,
+        word_emb_dim: int = 300,
+        node_emb_dim: int = 12,
+        relation_emb_dim: int = 10,
+        text_encoder_num_blocks: int = 1,
+        text_encoder_num_conv_layers: int = 3,
+        text_encoder_kernel_size: int = 5,
+        text_encoder_num_heads: int = 1,
+        graph_encoder_num_cov_layers: int = 4,
+        graph_encoder_num_bases: int = 3,
+        text_decoder_num_blocks: int = 1,
+        text_decoder_num_heads: int = 1,
+        learning_rate: float = 5e-4,
+        sample_k_gen_obs: int = 5,
+        steps_before_backprop: int = 5,
         max_decode_len: int = 200,
         pretrained_word_embedding_path: Optional[str] = None,
+        word_vocab_path: Optional[str] = None,
+        node_vocab_path: Optional[str] = None,
+        relation_vocab_path: Optional[str] = None,
     ) -> None:
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(
+            "hidden_dim",
+            "word_emb_dim",
+            "node_emb_dim",
+            "relation_emb_dim",
+            "text_encoder_num_blocks",
+            "text_encoder_num_conv_layers",
+            "text_encoder_kernel_size",
+            "text_encoder_num_heads",
+            "graph_encoder_num_cov_layers",
+            "graph_encoder_num_bases",
+            "text_decoder_num_blocks",
+            "text_decoder_num_heads",
+            "learning_rate",
+            "sample_k_gen_obs",
+            "steps_before_backprop",
+            "max_decode_len",
+        )
 
         # preprocessor
-        self.preprocessor = preprocessor
+        if word_vocab_path is not None:
+            self.preprocessor = SpacyPreprocessor.load_from_file(word_vocab_path)
+        else:
+            # just load with special tokens
+            self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
 
         # sample k generated observations in val and test
         self.sample_k_gen_obs = sample_k_gen_obs
@@ -218,12 +239,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
         # max decode length for greedy decoding
         self.max_decode_len = max_decode_len
 
-        # f1 scores for decoded obs
-        num_words = len(self.preprocessor.word_to_id_dict)
-        self.val_f1 = pl.metrics.F1(num_words)
-        self.test_f1 = pl.metrics.F1(num_words)
-
         # load pretrained word embedding and freeze it
+        num_words = len(self.preprocessor.word_to_id_dict)
         if pretrained_word_embedding_path is not None:
             pretrained_word_embedding = load_fasttext(
                 to_absolute_path(pretrained_word_embedding_path), self.preprocessor
@@ -233,14 +250,12 @@ class GraphUpdaterObsGen(pl.LightningModule):
         pretrained_word_embedding.weight.requires_grad = False
 
         # load node vocab
-        with open(to_absolute_path(node_vocab_path), "r") as f:
-            self.node_vocab = [node_name.strip() for node_name in f]
-
-        # load relation vocab
-        with open(to_absolute_path(relation_vocab_path), "r") as f:
-            self.relation_vocab = [relation_name.strip() for relation_name in f]
-        # add reverse relations
-        self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
+        if node_vocab_path is not None:
+            with open(to_absolute_path(node_vocab_path), "r") as f:
+                self.node_vocab = [node_name.strip() for node_name in f]
+        else:
+            # initialize with a single node
+            self.node_vocab = ["node"]
 
         # calculate mean masked node name embeddings
         node_name_word_ids, node_name_mask = self.preprocessor.preprocess(
@@ -249,6 +264,19 @@ class GraphUpdaterObsGen(pl.LightningModule):
         node_name_embeddings = masked_mean(
             pretrained_word_embedding(node_name_word_ids), node_name_mask
         )
+
+        # load relation vocab
+        if relation_vocab_path is not None:
+            with open(to_absolute_path(relation_vocab_path), "r") as f:
+                self.relation_vocab = [relation_name.strip() for relation_name in f]
+        else:
+            # initialize with a single relation
+            self.relation_vocab = ["relation"]
+
+        # add reverse relations
+        self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
+
+        # calculate mean masked relation name embeddings
         rel_name_word_ids, rel_name_mask = self.preprocessor.preprocess(
             self.relation_vocab
         )
@@ -663,18 +691,13 @@ def main(cfg: DictConfig) -> None:
         else:
             # remote path
             ckpt_path = cfg.eval.checkpoint_path
-        model = GraphUpdaterObsGen.load_from_checkpoint(
-            ckpt_path,
-            pretrained_word_embedding_path=None,  # this is saved in state dict
-        )
+        model = GraphUpdaterObsGen.load_from_checkpoint(ckpt_path, **cfg.model)
         trainer.test(model=model, datamodule=dm)
     else:
         # instantiate the lightning module
         lm = GraphUpdaterObsGen(
             **cfg.model,
             **cfg.train,
-            max_decode_len=cfg.eval.max_decode_len,
-            preprocessor=dm.preprocessor,
         )
         # we need to perform multiple backward steps in a single training step
         # so turn automatic optimizatin off
