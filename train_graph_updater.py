@@ -654,7 +654,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = RAdam(self.parameters(), lr=self.hparams.learning_rate)
-        scheduler = LambdaLR(optimizer, self.learning_rate_warmup, verbose=True)
+        scheduler = LambdaLR(optimizer, self.learning_rate_warmup)
         return {
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
