@@ -20,6 +20,7 @@ train:
   learning_rate: 5e-4
   sample_k_gen_obs: 5
   steps_before_backprop: 5
+  steps_for_lr_warmup: 10000
 
 pl_trainer:
   max_epochs: 6250  # 300000 / 48

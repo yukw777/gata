@@ -4,6 +4,7 @@ import pytorch_lightning as pl
 import hydra
 import random
 import wandb
+import math
 
 from urllib.parse import urlparse
 from typing import List, Dict, Tuple, Optional, cast, Iterator
@@ -12,6 +13,7 @@ from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim import Optimizer
+from torch.optim.lr_scheduler import LambdaLR
 
 from utils import (
     load_fasttext,
@@ -198,6 +200,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         sample_k_gen_obs: int = 5,
         steps_before_backprop: int = 5,
         max_decode_len: int = 200,
+        steps_for_lr_warmup: int = 10000,
         pretrained_word_embedding_path: Optional[str] = None,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
@@ -221,6 +224,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
             "sample_k_gen_obs",
             "steps_before_backprop",
             "max_decode_len",
+            "steps_for_lr_warmup",
         )
 
         # preprocessor
@@ -648,8 +652,20 @@ class GraphUpdaterObsGen(pl.LightningModule):
                 outputs, f"Generated Observations Test Epoch {self.current_epoch}"
             )
 
+    def learning_rate_warmup(self, step: int) -> float:
+        if step < self.hparams.steps_for_lr_warmup:  # type: ignore
+            return math.log2(step + 1) / math.log2(
+                self.hparams.steps_for_lr_warmup  # type: ignore
+            )
+        return 1.0
+
     def configure_optimizers(self):
-        return RAdam(self.parameters(), lr=self.hparams.learning_rate)
+        optimizer = RAdam(self.parameters(), lr=self.hparams.learning_rate)
+        scheduler = LambdaLR(optimizer, self.learning_rate_warmup, verbose=True)
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
+        }
 
 
 class WandbSaveCallback(Callback):

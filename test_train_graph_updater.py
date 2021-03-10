@@ -138,3 +138,9 @@ def test_main_test_only(tmp_path):
             ],
         )
         main(cfg)
+
+
+@pytest.mark.parametrize("step,multiplier", [(0, 0), (3, 0.5), (15, 1), (10000, 1)])
+def test_learning_rate_warmup(step, multiplier):
+    g = GraphUpdaterObsGen(steps_for_lr_warmup=16)
+    assert g.learning_rate_warmup(step) == multiplier
