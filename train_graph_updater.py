@@ -680,7 +680,21 @@ def main(cfg: DictConfig) -> None:
     dm = GraphUpdaterObsGenDataModule(**cfg.data)
 
     # test
-    if cfg.eval.run_test:
+    if not cfg.eval.test_only:
+        # instantiate the lightning module
+        lm = GraphUpdaterObsGen(
+            **cfg.model, **cfg.train, max_decode_len=cfg.eval.max_decode_len
+        )
+        # we need to perform multiple backward steps in a single training step
+        # so turn automatic optimizatin off
+        lm.automatic_optimization = False
+
+        # fit
+        trainer.fit(lm, datamodule=dm)
+
+        # test
+        trainer.test(datamodule=dm)
+    else:
         assert (
             cfg.eval.checkpoint_path is not None
         ), "missing checkpoint path for testing"
@@ -691,20 +705,10 @@ def main(cfg: DictConfig) -> None:
         else:
             # remote path
             ckpt_path = cfg.eval.checkpoint_path
-        model = GraphUpdaterObsGen.load_from_checkpoint(ckpt_path, **cfg.model)
-        trainer.test(model=model, datamodule=dm)
-    else:
-        # instantiate the lightning module
-        lm = GraphUpdaterObsGen(
-            **cfg.model,
-            **cfg.train,
+        model = GraphUpdaterObsGen.load_from_checkpoint(
+            ckpt_path, **cfg.model, max_decode_len=cfg.eval.max_decode_len
         )
-        # we need to perform multiple backward steps in a single training step
-        # so turn automatic optimizatin off
-        lm.automatic_optimization = False
-
-        # fit
-        trainer.fit(lm, datamodule=dm)
+        trainer.test(model=model, datamodule=dm)
 
 
 if __name__ == "__main__":

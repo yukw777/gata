@@ -100,7 +100,7 @@ def test_graph_updater_obs_gen_default_init():
     )
 
 
-def test_main():
+def test_main(tmp_path):
     with initialize(config_path="train_graph_updater_conf"):
         cfg = compose(
             config_name="config",
@@ -115,13 +115,14 @@ def test_main():
                 "data.test_batch_size=2",
                 "data.test_num_workers=0",
                 "model_size=tiny",
-                "+pl_trainer.fast_dev_run=true",
+                f"+pl_trainer.default_root_dir={tmp_path}",
+                "pl_trainer.max_epochs=1",
             ],
         )
         main(cfg)
 
 
-def test_main_test():
+def test_main_test_only(tmp_path):
     with initialize(config_path="train_graph_updater_conf"):
         cfg = compose(
             config_name="config",
@@ -129,9 +130,10 @@ def test_main_test():
                 "data.test_path=test-data/test-data.json",
                 "data.test_batch_size=2",
                 "data.test_num_workers=0",
-                "eval.run_test=true",
+                "eval.test_only=true",
                 "eval.checkpoint_path=test-data/test.ckpt",
                 "model_size=tiny",
+                f"+pl_trainer.default_root_dir={tmp_path}",
                 "+pl_trainer.limit_test_batches=1",
             ],
         )
