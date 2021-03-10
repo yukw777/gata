@@ -236,15 +236,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
             # just load with special tokens
             self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
 
-        # sample k generated observations in val and test
-        self.sample_k_gen_obs = sample_k_gen_obs
-
-        # how many steps before backprop
-        self.steps_before_backprop = steps_before_backprop
-
-        # max decode length for greedy decoding
-        self.max_decode_len = max_decode_len
-
         # load pretrained word embedding and freeze it
         num_words = len(self.preprocessor.word_to_id_dict)
         if pretrained_word_embedding_path is not None:
@@ -292,18 +283,18 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # graph updater
         self.graph_updater = GraphUpdater(
-            hidden_dim,
-            word_emb_dim,
+            self.hparams.hidden_dim,  # type: ignore
+            self.hparams.word_emb_dim,  # type: ignore
             len(self.node_vocab),
-            node_emb_dim,
+            self.hparams.node_emb_dim,  # type: ignore
             len(self.relation_vocab),
-            relation_emb_dim,
-            text_encoder_num_blocks,
-            text_encoder_num_conv_layers,
-            text_encoder_kernel_size,
-            text_encoder_num_heads,
-            graph_encoder_num_cov_layers,
-            graph_encoder_num_bases,
+            self.hparams.relation_emb_dim,  # type: ignore
+            self.hparams.text_encoder_num_blocks,  # type: ignore
+            self.hparams.text_encoder_num_conv_layers,  # type: ignore
+            self.hparams.text_encoder_kernel_size,  # type: ignore
+            self.hparams.text_encoder_num_heads,  # type: ignore
+            self.hparams.graph_encoder_num_cov_layers,  # type: ignore
+            self.hparams.graph_encoder_num_bases,  # type: ignore
             pretrained_word_embedding,
             node_name_embeddings,
             rel_name_embeddings,
@@ -427,7 +418,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         eos_id = self.preprocessor.word_to_id(EOS)
         eos_mask = torch.tensor([False] * batch_size, device=self.device)
         # (batch)
-        for _ in range(self.max_decode_len):
+        for _ in range(self.hparams.max_decode_len):  # type: ignore
             input = self.graph_updater.text_encoder.word_emb_prj(
                 self.graph_updater.word_embeddings(decoded_word_ids)
             )
@@ -520,7 +511,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
                         )
                     )
 
-            if training and (len(losses) == self.steps_before_backprop):
+            if training and (
+                len(losses) == self.hparams.steps_before_backprop  # type: ignore
+            ):
                 yield {"losses": losses}
                 losses = []
 
@@ -623,8 +616,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
     ) -> None:
         flat_outputs = [item for sublist in outputs for item in sublist]
         data = (
-            random.sample(flat_outputs, self.sample_k_gen_obs)
-            if len(flat_outputs) >= self.sample_k_gen_obs
+            random.sample(flat_outputs, self.hparams.sample_k_gen_obs)  # type: ignore
+            if len(flat_outputs) >= self.hparams.sample_k_gen_obs  # type: ignore
             else flat_outputs
         )
         self.logger.experiment.log(
