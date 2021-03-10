@@ -225,7 +225,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
         # preprocessor
         if word_vocab_path is not None:
-            self.preprocessor = SpacyPreprocessor.load_from_file(word_vocab_path)
+            self.preprocessor = SpacyPreprocessor.load_from_file(
+                to_absolute_path(word_vocab_path)
+            )
         else:
             # just load with special tokens
             self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
