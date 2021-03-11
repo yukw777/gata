@@ -457,7 +457,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def process_batch(
         self,
         batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor],
-        training: bool = False,
     ) -> Iterator[Dict[str, List[torch.Tensor]]]:
         episode_seq, episode_mask = batch
         h_t: Optional[torch.Tensor] = None
@@ -475,7 +474,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
                     torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
                 ).unsqueeze(0)
             )
-            if not training:
+            if not self.training:
                 preds.append(results["pred_obs_word_ids"])
                 decoded.append(results["decoded_obs_word_ids"])
                 for j, (
@@ -511,14 +510,14 @@ class GraphUpdaterObsGen(pl.LightningModule):
                         )
                     )
 
-            if training and (
+            if self.training and (
                 len(losses) == self.hparams.steps_before_backprop  # type: ignore
             ):
                 yield {"losses": losses}
                 losses = []
 
         results = {"losses": losses}
-        if training:
+        if self.training:
             if len(losses) != 0:
                 yield results
             return
@@ -533,7 +532,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         # we only have one optimizer
         opt = cast(Optimizer, self.optimizers())
 
-        for results in self.process_batch(batch, training=True):
+        for results in self.process_batch(batch):
             loss = torch.cat(results["losses"]).mean()
             self.log("train_loss", loss, prog_bar=True)
             self.manual_backward(loss)
