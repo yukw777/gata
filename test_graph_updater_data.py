@@ -30,31 +30,32 @@ def test_graph_updater_obs_gen_data_module_prepare_batch():
         "vocabs/word_vocab.txt",
     )
     data_module.setup()
-    prepared_batch, episode_mask = data_module.prepare_batch(list(data_module.train))
+    prepared_batch = data_module.prepare_batch(list(data_module.train))
 
-    # check episode_mask
-    assert episode_mask.equal(
-        torch.Tensor(
-            [
-                [1, 0, 0, 0, 0, 0, 0],
-                [1, 1, 1, 1, 0, 0, 0],
-                [1, 1, 1, 1, 1, 1, 1],
-            ]
-        ).float()
-    )
+    # expected step masks
+    expected_step_masks = [
+        torch.tensor([1, 1, 1]).float(),
+        torch.tensor([0, 1, 1]).float(),
+        torch.tensor([0, 1, 1]).float(),
+        torch.tensor([0, 1, 1]).float(),
+        torch.tensor([0, 0, 1]).float(),
+        torch.tensor([0, 0, 1]).float(),
+        torch.tensor([0, 0, 1]).float(),
+    ]
     assert len(prepared_batch) == 7
-    for i, episode in enumerate(prepared_batch):
-        # if episode_mask == 0, observations should be [<bos>, <pad>, ...]
+    for episode, expected_step_mask in zip(prepared_batch, expected_step_masks):
+        assert episode["step_mask"].equal(expected_step_mask)
+        # if step_mask == 0, observations should be [<bos>, <pad>, ...]
         assert (
-            episode["obs_word_ids"][episode_mask[:, i] == 0][:, 0]
+            episode["obs_word_ids"][episode["step_mask"] == 0][:, 0]
             == data_module.preprocessor.word_to_id(BOS)
         ).all()
         assert (episode["prev_action_word_ids"].sum(dim=1) == 0).equal(
-            episode_mask[:, i] == 0
+            episode["step_mask"] == 0
         )
         # if episode_mask == 0, ground truth observations should be [<eos>, <pad>, ...]
         assert (
-            episode["groundtruth_obs_word_ids"][episode_mask[:, i] == 0][:, 0]
+            episode["groundtruth_obs_word_ids"][episode["step_mask"] == 0][:, 0]
             == data_module.preprocessor.word_to_id(EOS)
         ).all()
 

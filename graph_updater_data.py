@@ -2,7 +2,7 @@ import json
 import torch
 import pytorch_lightning as pl
 
-from typing import Optional, Dict, List, Any, Tuple
+from typing import Optional, Dict, List, Any
 from torch.utils.data import Dataset, DataLoader
 from hydra.utils import to_absolute_path
 
@@ -75,7 +75,7 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
 
     def prepare_batch(
         self, batch: List[List[Dict[str, Any]]]
-    ) -> Tuple[List[Dict[str, torch.Tensor]], torch.Tensor]:
+    ) -> List[Dict[str, torch.Tensor]]:
         """
         This is a bit tricky, b/c we have to pad the episodes as well as the
         observation and previous action strings within each episode. The original
@@ -91,22 +91,21 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
                 'prev_action_word_ids': tensor of shape (batch, prev_action_len),
                 'prev_action_mask': tensor of shape (batch, prev_action_len),
                 'groundtruth_obs_word_ids': tensor of shape (batch, obs_len),
+                'step_mask': tensor of shape (batch),
             },
             ...
-        ], episode_mask of shape (batch, max_episode_len)
+        ]
         """
-        # calculate episode_mask first
         episode_lens = [len(episode) for episode in batch]
         max_episode_len = max(episode_lens)
-        episode_mask = torch.tensor(
-            [
-                [1] * episode_len + [0] * (max_episode_len - episode_len)
-                for episode_len in episode_lens
-            ]
-        ).float()
 
         prepared_batch: List[Dict[str, torch.Tensor]] = []
         for i in range(max_episode_len):
+            # calculate step_mask first
+            step_mask = torch.tensor(
+                [1 if i < episode_len else 0 for episode_len in episode_lens]
+            ).float()
+
             # Collect the observations and prev action of the i'th episode
             # and batchify them.
             # If the length of an episode is shorter than max_episode_len,
@@ -148,10 +147,11 @@ class GraphUpdaterObsGenDataModule(pl.LightningDataModule):
                     "prev_action_word_ids": prev_action_word_ids,
                     "prev_action_mask": prev_action_mask,
                     "groundtruth_obs_word_ids": groundtruth_obs_word_ids,
+                    "step_mask": step_mask,
                 }
             )
 
-        return prepared_batch, episode_mask
+        return prepared_batch
 
     def train_dataloader(self) -> DataLoader:  # type: ignore
         return DataLoader(
