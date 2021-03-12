@@ -101,7 +101,16 @@ def test_calculate_seq_f1(preds, groundtruth, expected):
     [
         ([1, 2, 3, 4, 5, 6], 3, [[1, 2, 3], [4, 5, 6]]),
         ([1, 2, 3, 4, 5, 6, 7, 8], 3, [[1, 2, 3], [4, 5, 6], [7, 8]]),
+        (
+            torch.arange(10),
+            4,
+            [torch.arange(4), torch.arange(4, 8), torch.arange(8, 10)],
+        ),
     ],
 )
 def test_batchify(seq, size, batches):
-    assert list(batchify(seq, size)) == batches
+    for batch, expected in zip(batchify(seq, size), batches):
+        if isinstance(expected, torch.Tensor):
+            assert expected.equal(batch)
+        else:
+            assert batch == expected
