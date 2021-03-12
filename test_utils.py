@@ -9,6 +9,7 @@ from utils import (
     generate_square_subsequent_mask,
     masked_softmax,
     calculate_seq_f1,
+    batchify,
 )
 
 
@@ -93,3 +94,14 @@ def test_generate_subsequent_mask(size):
 )
 def test_calculate_seq_f1(preds, groundtruth, expected):
     assert calculate_seq_f1(preds, groundtruth) == expected
+
+
+@pytest.mark.parametrize(
+    "seq,size,batches",
+    [
+        ([1, 2, 3, 4, 5, 6], 3, [[1, 2, 3], [4, 5, 6]]),
+        ([1, 2, 3, 4, 5, 6, 7, 8], 3, [[1, 2, 3], [4, 5, 6], [7, 8]]),
+    ],
+)
+def test_batchify(seq, size, batches):
+    assert list(batchify(seq, size)) == batches

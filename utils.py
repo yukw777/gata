@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional, List
+from typing import Optional, List, Sequence, Iterator, TypeVar
 from collections import Counter
 
 from preprocessor import SpacyPreprocessor
@@ -76,3 +76,12 @@ def calculate_seq_f1(
     recall = 1.0 * num_same / len(ground_truth_obs_word_ids)
     f1 = (2 * precision * recall) / (precision + recall)
     return f1
+
+
+T = TypeVar("T")
+
+
+def batchify(seq: Sequence[T], size: int) -> Iterator[Sequence[T]]:
+    seq_len = len(seq)
+    for ndx in range(0, seq_len, size):
+        yield seq[ndx : min(ndx + size, seq_len)]
