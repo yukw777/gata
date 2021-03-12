@@ -7,12 +7,11 @@ import wandb
 import math
 
 from urllib.parse import urlparse
-from typing import List, Dict, Tuple, Optional, cast, Iterator, Any
+from typing import List, Dict, Tuple, Optional, Any
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning.loggers import WandbLogger
-from torch.optim import Optimizer
 from torch.optim.lr_scheduler import LambdaLR
 
 from utils import (
@@ -20,6 +19,7 @@ from utils import (
     masked_mean,
     generate_square_subsequent_mask,
     calculate_seq_f1,
+    batchify,
 )
 from preprocessor import SpacyPreprocessor, BOS, EOS, PAD, UNK
 from graph_updater import GraphUpdater, PositionalEncoderTensor2Tensor
@@ -198,13 +198,13 @@ class GraphUpdaterObsGen(pl.LightningModule):
         text_decoder_num_heads: int = 1,
         learning_rate: float = 5e-4,
         sample_k_gen_obs: int = 5,
-        steps_before_backprop: int = 5,
         max_decode_len: int = 200,
         steps_for_lr_warmup: int = 10000,
         pretrained_word_embedding_path: Optional[str] = None,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
+        **kwargs,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(
@@ -222,7 +222,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
             "text_decoder_num_heads",
             "learning_rate",
             "sample_k_gen_obs",
-            "steps_before_backprop",
             "max_decode_len",
             "steps_for_lr_warmup",
         )
@@ -456,22 +455,23 @@ class GraphUpdaterObsGen(pl.LightningModule):
 
     def process_batch(
         self,
-        batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor],
-    ) -> Iterator[Dict[str, List[torch.Tensor]]]:
-        episode_seq, episode_mask = batch
+        batch: List[Dict[str, torch.Tensor]],
+    ) -> Dict[str, List[torch.Tensor]]:
         h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
         f1s: List[torch.Tensor] = []
         preds: List[torch.Tensor] = []
         decoded: List[torch.Tensor] = []
         eos_id = self.preprocessor.word_to_id(EOS)
-        for i, episode_data in enumerate(episode_seq):
+        for i, episode_data in enumerate(batch):
             results = self(episode_data, rnn_prev_hidden=h_t)
             h_t = results["h_t"]
-            loss_mask = episode_mask[:, i]
             losses.append(
                 (
-                    torch.sum(results["batch_loss"] * loss_mask) / loss_mask.sum()
+                    torch.sum(
+                        results["batch_loss"] * episode_data["step_mask"].unsqueeze(-1)
+                    )
+                    / episode_data["step_mask"].sum()
                 ).unsqueeze(0)
             )
             if not self.training:
@@ -486,8 +486,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
                         episode_data["groundtruth_obs_word_ids"].tolist(),
                     ),
                 ):
-                    if episode_mask[j, i] == 0:
-                        # if episode is masked, skip
+                    if episode_data["step_mask"][j] == 0:
+                        # if step is masked, skip
                         continue
 
                     # cut at eos
@@ -510,59 +510,41 @@ class GraphUpdaterObsGen(pl.LightningModule):
                         )
                     )
 
-            if self.training and (
-                len(losses) == self.hparams.steps_before_backprop  # type: ignore
-            ):
-                yield {"losses": losses}
-                losses = []
-
         results = {"losses": losses}
         if self.training:
-            if len(losses) != 0:
-                yield results
-            return
+            return results
+
         results["preds"] = preds
         results["decoded"] = decoded
         results["f1s"] = f1s
-        yield results
+        return results
 
     def training_step(  # type: ignore
-        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
-    ) -> None:
-        # we only have one optimizer
-        opt = cast(Optimizer, self.optimizers())
+        self,
+        batch: List[Dict[str, torch.Tensor]],
+        batch_idx: int,
+        hiddens: torch.Tensor,
+    ) -> torch.Tensor:
+        results = self.process_batch(batch)
+        return torch.cat(results["losses"]).mean()
 
-        for results in self.process_batch(batch):
-            loss = torch.cat(results["losses"]).mean()
-            self.log("train_loss", loss, prog_bar=True)
-            self.manual_backward(loss)
-            opt.step()
-            opt.zero_grad()
+    def tbptt_split_batch(self, batch, split_size: int):
+        return list(batchify(batch, split_size))
 
     def eval_step(
         self,
-        batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor],
+        batch: List[Dict[str, torch.Tensor]],
         log_key_prefix: str,
     ) -> List[Tuple[str, str, str]]:
-        episode_seq, _ = batch
-
-        losses: List[torch.Tensor] = []
-        preds: List[torch.Tensor] = []
-        decoded: List[torch.Tensor] = []
-        f1s: List[torch.Tensor] = []
-
-        for results in self.process_batch(batch):
-            losses.extend(results["losses"])
-            preds.extend(results["preds"])
-            decoded.extend(results["decoded"])
-            f1s.extend(results["f1s"])
-
-        self.log(log_key_prefix + "loss", torch.cat(losses).mean())
-        self.log(log_key_prefix + "f1", torch.stack(f1s).mean())
-        return self.gen_decoded_groundtruth_pred_table(episode_seq, preds, decoded)
+        results = self.process_batch(batch)
+        self.log(log_key_prefix + "loss", torch.cat(results["losses"]).mean())
+        self.log(log_key_prefix + "f1", torch.stack(results["f1s"]).mean())
+        return self.gen_decoded_groundtruth_pred_table(
+            batch, results["preds"], results["decoded"]
+        )
 
     def validation_step(  # type: ignore
-        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+        self, batch: List[Dict[str, torch.Tensor]], batch_idx: int
     ) -> List[Tuple[str, str, str]]:
         return self.eval_step(batch, "val_")
 
@@ -634,7 +616,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
             )
 
     def test_step(  # type: ignore
-        self, batch: Tuple[List[Dict[str, torch.Tensor]], torch.Tensor], batch_idx: int
+        self, batch: List[Dict[str, torch.Tensor]], batch_idx: int
     ) -> List[Tuple[str, str, str]]:
         return self.eval_step(batch, "test_")
 
@@ -699,9 +681,6 @@ def main(cfg: DictConfig) -> None:
         lm = GraphUpdaterObsGen(
             **cfg.model, **cfg.train, max_decode_len=cfg.eval.max_decode_len
         )
-        # we need to perform multiple backward steps in a single training step
-        # so turn automatic optimizatin off
-        lm.automatic_optimization = False
 
         # fit
         trainer.fit(lm, datamodule=dm)
