@@ -204,6 +204,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
+        **kwargs,
     ) -> None:
         super().__init__()
         self.save_hyperparameters(
