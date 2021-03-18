@@ -1,1 +1,1 @@
-# PyTorch Lightning + Hydra seed
+# Graph-aided Transformer Agent (GATA) Replication
