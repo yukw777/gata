@@ -21,7 +21,8 @@ from utils import (
     batchify,
 )
 from preprocessor import SpacyPreprocessor, BOS, EOS, PAD, UNK
-from graph_updater import GraphUpdater, PositionalEncoderTensor2Tensor
+from graph_updater import GraphUpdater
+from layers import PositionalEncoderTensor2Tensor
 from optimizers import RAdam
 from graph_updater_data import GraphUpdaterObsGenDataModule
 
