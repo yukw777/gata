@@ -744,12 +744,12 @@ class GraphUpdater(nn.Module):
         {
             'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim)
             'g_t': encoded graph at time t; (batch, num_relation, num_node, num_node)
-            'h_ag': aggregated node representation of the current graph
-                with the previous action. Used for pretraining.
-                (batch, num_node, hidden_dim)
-            'h_ga': aggregated representation of the previous action
+            'h_ag': aggregated representation of the previous action
                 with the current graph. Used for pretraining.
                 (batch, prev_action_len, hidden_dim)
+            'h_ga': aggregated node representation of the current graph
+                with the previous action. Used for pretraining.
+                (batch, num_node, hidden_dim)
             'prj_obs': projected input obs word embeddings. Used for pretraining.
                 (batch, obs_len, hidden_dim)
         }
