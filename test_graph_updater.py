@@ -17,6 +17,7 @@ from graph_updater import (
     ReprAggregator,
     GraphUpdater,
 )
+from utils import increasing_mask
 
 
 @pytest.mark.parametrize(
@@ -241,9 +242,7 @@ def test_text_enc_block(
     # random tensors and increasing masks
     assert text_enc_block(
         torch.rand(batch_size, seq_len, hidden_dim),
-        torch.tensor(
-            [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
-        ),
+        increasing_mask(batch_size, seq_len),
     ).size() == (
         batch_size,
         seq_len,
@@ -279,9 +278,7 @@ def test_text_encoder(
     # random word ids and increasing masks
     assert text_encoder(
         torch.rand(batch_size, seq_len, enc_block_hidden_dim),
-        torch.tensor(
-            [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
-        ),
+        increasing_mask(batch_size, seq_len),
     ).size() == (
         batch_size,
         seq_len,

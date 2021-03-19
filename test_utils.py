@@ -10,6 +10,7 @@ from utils import (
     masked_softmax,
     calculate_seq_f1,
     batchify,
+    increasing_mask,
 )
 
 
@@ -114,3 +115,10 @@ def test_batchify(seq, size, batches):
             assert expected.equal(batch)
         else:
             assert batch == expected
+
+
+def test_increasing_mask():
+    assert increasing_mask(3, 2).equal(torch.tensor([[1, 0], [1, 1], [1, 1]]).float())
+    assert increasing_mask(3, 2, start_with_zero=True).equal(
+        torch.tensor([[0, 0], [1, 0], [1, 1]]).float()
+    )
