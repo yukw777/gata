@@ -86,18 +86,18 @@ def test_graph_updater_obs_gen_default_init():
     g = GraphUpdaterObsGen()
     default_word_vocab = [PAD, UNK, BOS, EOS]
     assert g.preprocessor.word_vocab == default_word_vocab
-    assert g.graph_updater.word_embeddings.weight.size() == (
+    assert g.graph_updater.word_embeddings[0].weight.size() == (
         len(default_word_vocab),
         g.hparams.word_emb_dim,
     )
-    assert g.graph_updater.node_name_embeddings.size() == (
-        1,
-        g.hparams.word_emb_dim,
-    )
-    assert g.graph_updater.relation_name_embeddings.size() == (
-        2,
-        g.hparams.word_emb_dim,
-    )
+
+    # default node_vocab = ['node']
+    assert g.graph_updater.node_name_word_ids.size() == (len(g.node_vocab), 1)
+    assert g.graph_updater.node_name_mask.size() == (len(g.node_vocab), 1)
+
+    # default relation_vocab = ['relation', 'relation reverse']
+    assert g.graph_updater.rel_name_word_ids.size() == (len(g.relation_vocab), 2)
+    assert g.graph_updater.rel_name_mask.size() == (len(g.relation_vocab), 2)
 
 
 def test_main(tmp_path):

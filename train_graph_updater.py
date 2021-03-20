@@ -16,7 +16,6 @@ from torch.optim.lr_scheduler import LambdaLR
 
 from utils import (
     load_fasttext,
-    masked_mean,
     generate_square_subsequent_mask,
     calculate_seq_f1,
     batchify,
@@ -257,10 +256,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
         node_name_word_ids, node_name_mask = self.preprocessor.preprocess(
             self.node_vocab
         )
-        node_name_embeddings = masked_mean(
-            pretrained_word_embedding(node_name_word_ids), node_name_mask
-        )
-
         # load relation vocab
         if relation_vocab_path is not None:
             with open(to_absolute_path(relation_vocab_path), "r") as f:
@@ -275,9 +270,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
         # calculate mean masked relation name embeddings
         rel_name_word_ids, rel_name_mask = self.preprocessor.preprocess(
             self.relation_vocab
-        )
-        rel_name_embeddings = masked_mean(
-            pretrained_word_embedding(rel_name_word_ids), rel_name_mask
         )
 
         # graph updater
@@ -295,8 +287,10 @@ class GraphUpdaterObsGen(pl.LightningModule):
             self.hparams.graph_encoder_num_cov_layers,  # type: ignore
             self.hparams.graph_encoder_num_bases,  # type: ignore
             pretrained_word_embedding,
-            node_name_embeddings,
-            rel_name_embeddings,
+            node_name_word_ids,
+            node_name_mask,
+            rel_name_word_ids,
+            rel_name_mask,
         )
         self.graph_updater.pretraining = True
 
@@ -418,9 +412,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         eos_mask = torch.tensor([False] * batch_size, device=self.device)
         # (batch)
         for _ in range(self.hparams.max_decode_len):  # type: ignore
-            input = self.graph_updater.text_encoder.word_emb_prj(
-                self.graph_updater.word_embeddings(decoded_word_ids)
-            )
+            input = self.graph_updater.word_embeddings(decoded_word_ids)
             # (batch, curr_decode_len, hidden_dim)
             input_mask = decoded_word_ids.ne(self.preprocessor.pad_id).float()
             # (batch, curr_decode_len)
