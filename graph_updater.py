@@ -605,8 +605,10 @@ class GraphUpdater(nn.Module):
         graph_encoder_num_cov_layers: int,
         graph_encoder_num_bases: int,
         pretrained_word_embeddings: nn.Embedding,
-        node_name_embeddings: torch.Tensor,
-        relation_name_embeddings: torch.Tensor,
+        node_name_word_ids: torch.Tensor,
+        node_name_mask: torch.Tensor,
+        rel_name_word_ids: torch.Tensor,
+        rel_name_mask: torch.Tensor,
     ) -> None:
         super().__init__()
         # constants
@@ -615,27 +617,36 @@ class GraphUpdater(nn.Module):
         self.num_nodes = num_nodes
         self.num_relations = num_relations
 
-        # untrainable word embeddings
+        # word embeddings
         assert word_emb_dim == pretrained_word_embeddings.embedding_dim
-        assert not pretrained_word_embeddings.weight.requires_grad
-        self.word_embeddings = pretrained_word_embeddings
+        self.word_embeddings = nn.Sequential(
+            pretrained_word_embeddings, nn.Linear(word_emb_dim, hidden_dim, bias=False)
+        )
 
-        # trainable node and relation embeddings
+        # node and relation embeddings
         self.node_embeddings = nn.Embedding(num_nodes, node_emb_dim)
         self.relation_embeddings = nn.Embedding(num_relations, relation_emb_dim)
 
-        # save the node and relation name embeddings as buffers. GATA used the
-        # mean word embeddings of the node and relation name words.
-        # these are static as we have a fixed set of node and relation names
-        # and word embeddings are frozen.
-        assert node_name_embeddings.size() == (self.num_nodes, word_emb_dim)
-        assert relation_name_embeddings.size() == (self.num_relations, word_emb_dim)
-        self.register_buffer("node_name_embeddings", node_name_embeddings)
-        self.register_buffer("relation_name_embeddings", relation_name_embeddings)
+        # save the node and relation name word ids and masks as buffers.
+        # GATA used the mean word embeddings of the node and relation name words.
+        # These are static as we have a fixed set of node and relation names.
+        assert node_name_word_ids.dtype == torch.int64
+        assert node_name_mask.dtype == torch.float
+        assert node_name_word_ids.size() == node_name_mask.size()
+        assert node_name_word_ids.size(0) == self.num_nodes
+        assert node_name_mask.size(0) == self.num_nodes
+        assert rel_name_word_ids.dtype == torch.int64
+        assert rel_name_mask.dtype == torch.float
+        assert rel_name_word_ids.size() == rel_name_mask.size()
+        assert rel_name_word_ids.size(0) == self.num_relations
+        assert rel_name_mask.size(0) == self.num_relations
+        self.register_buffer("node_name_word_ids", node_name_word_ids)
+        self.register_buffer("node_name_mask", node_name_mask)
+        self.register_buffer("rel_name_word_ids", rel_name_word_ids)
+        self.register_buffer("rel_name_mask", rel_name_mask)
 
         # encoders
         self.text_encoder = TextEncoder(
-            word_emb_dim,
             text_encoder_num_blocks,
             text_encoder_num_conv_layers,
             text_encoder_kernel_size,
@@ -643,8 +654,8 @@ class GraphUpdater(nn.Module):
             text_encoder_num_heads,
         )
         self.graph_encoder = GraphEncoder(
-            word_emb_dim + node_emb_dim,
-            word_emb_dim + relation_emb_dim,
+            hidden_dim + node_emb_dim,
+            hidden_dim + relation_emb_dim,
             num_relations,
             [hidden_dim] * graph_encoder_num_cov_layers,
             graph_encoder_num_bases,
@@ -719,6 +730,36 @@ class GraphUpdater(nn.Module):
         return torch.cat([h, h.transpose(2, 3)], dim=1)
         # (batch, num_relation, num_node, num_node)
 
+    def get_node_features(self) -> torch.Tensor:
+        """
+        Return node features by concatenating the masked mean
+        node name embeddings and node embeddings.
+
+        output: (num_node, hidden_dim + node_emb_dim)
+        """
+        node_name_embeddings = masked_mean(
+            self.word_embeddings(self.node_name_word_ids),
+            self.node_name_mask,  # type: ignore
+        )
+        # (num_node, hidden_dim)
+        return torch.cat([node_name_embeddings, self.node_embeddings.weight], dim=1)
+        # (num_node, hidden_dim + node_emb_dim)
+
+    def get_relation_features(self) -> torch.Tensor:
+        """
+        Return relation features by concatenating the masked mean
+        relation name embeddings and relation embeddings.
+
+        output: (num_node, hidden_dim + relation_emb_dim)
+        """
+        rel_name_embeddings = masked_mean(
+            self.word_embeddings(self.rel_name_word_ids),
+            self.rel_name_mask,  # type: ignore
+        )
+        # (num_relations, hidden_dim)
+        return torch.cat([rel_name_embeddings, self.relation_embeddings.weight], dim=1)
+        # (num_relations, hidden_dim + relation_emb_dim)
+
     def forward(
         self,
         obs_word_ids: torch.Tensor,
@@ -752,13 +793,13 @@ class GraphUpdater(nn.Module):
 
         # encode text observations and previous actions
         obs_word_embs = self.word_embeddings(obs_word_ids)
-        # (batch, obs_len, word_emb_dim)
-        encoded_obs, prj_obs = self.text_encoder(obs_word_embs, obs_mask)
+        # (batch, obs_len, hidden_dim)
+        encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
         # encoded_obs: (batch, obs_len, hidden_dim)
         # prj_obs: (batch, obs_len, hidden_dim)
         prev_action_embs = self.word_embeddings(prev_action_word_ids)
-        # (batch, prev_action_len, word_emb_dim)
-        encoded_prev_action, _ = self.text_encoder(prev_action_embs, prev_action_mask)
+        # (batch, prev_action_len, hidden_dim)
+        encoded_prev_action = self.text_encoder(prev_action_embs, prev_action_mask)
         # (batch, prev_action_len, hidden_dim)
 
         # decode the previous graph
@@ -775,34 +816,14 @@ class GraphUpdater(nn.Module):
             prev_graph = self.f_d(rnn_prev_hidden)
             # (batch, num_relation, num_node, num_node)
 
-        # get the initial graph node embeddings by concatenating the node name
-        # embeddings and node embeddings
-        node_embs = self.node_embeddings(
-            torch.arange(self.num_nodes, device=self.node_embeddings.weight.device)
-        )
-        # (num_node, node_emb_dim)
-        node_features = (
-            torch.cat([self.node_name_embeddings, node_embs], dim=1)  # type: ignore
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1)
-        )
-        # (batch, num_node, word_emb_dim + node_emb_dim)
-        relation_embs = self.relation_embeddings(
-            torch.arange(
-                self.num_relations, device=self.relation_embeddings.weight.device
-            )
-        )
-        # (num_node, relation_emb_dim)
-        relation_features = (
-            torch.cat(
-                [self.relation_name_embeddings, relation_embs], dim=1  # type: ignore
-            )
-            .unsqueeze(0)
-            .expand(batch_size, -1, -1)
-        )
-        # (batch, num_node, word_emb_dim + relation_emb_dim)
-
         # encode the previous graph
+        node_features = self.get_node_features().unsqueeze(0).expand(batch_size, -1, -1)
+        # (batch, num_node, hidden_dim + node_emb_dim)
+        relation_features = (
+            self.get_relation_features().unsqueeze(0).expand(batch_size, -1, -1)
+        )
+        # (batch, num_relations, hidden_dim + relation_emb_dim)
+
         encoded_prev_graph = self.graph_encoder(
             node_features, relation_features, prev_graph
         )
@@ -849,6 +870,6 @@ class GraphUpdater(nn.Module):
         results["h_ga"] = h_ga
 
         # finally include prj_obs
-        results["prj_obs"] = prj_obs
+        results["prj_obs"] = obs_word_embs
 
         return results

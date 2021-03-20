@@ -401,8 +401,8 @@ def test_graph_updater_forward(
     prev_action_len,
     rnn_prev_hidden,
 ):
-    word_embeddings = nn.Embedding(100, word_emb_dim)
-    word_embeddings.weight.requires_grad = False
+    num_words = 100
+    word_embeddings = nn.Embedding(num_words, word_emb_dim)
     gu = GraphUpdater(
         hidden_dim,
         word_emb_dim,
@@ -417,12 +417,14 @@ def test_graph_updater_forward(
         graph_encoder_num_conv_layers,
         graph_encoder_num_bases,
         word_embeddings,
-        torch.rand(num_nodes, word_emb_dim),
-        torch.rand(num_relations, word_emb_dim),
+        torch.randint(num_words, (num_nodes, 5)),
+        torch.randint(2, (num_nodes, 5)).float(),
+        torch.randint(num_words, (num_relations, 3)),
+        torch.randint(2, (num_relations, 3)).float(),
     )
     results = gu(
-        torch.randint(100, (batch, obs_len)),
-        torch.randint(100, (batch, prev_action_len)),
+        torch.randint(num_words, (batch, obs_len)),
+        torch.randint(num_words, (batch, prev_action_len)),
         torch.randint(2, (batch, obs_len)).float(),
         torch.randint(2, (batch, prev_action_len)).float(),
         rnn_prev_hidden,
