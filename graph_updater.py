@@ -430,7 +430,6 @@ class TextEncoderBlock(nn.Module):
 class TextEncoder(nn.Module):
     def __init__(
         self,
-        word_emb_dim: int,
         num_enc_blocks: int,
         enc_block_num_conv_layers: int,
         enc_block_kernel_size: int,
@@ -438,7 +437,6 @@ class TextEncoder(nn.Module):
         enc_block_num_heads: int,
     ) -> None:
         super().__init__()
-        self.word_emb_prj = nn.Linear(word_emb_dim, enc_block_hidden_dim, bias=False)
         self.enc_blocks = nn.ModuleList(
             TextEncoderBlock(
                 enc_block_num_conv_layers,
@@ -451,25 +449,21 @@ class TextEncoder(nn.Module):
 
     def forward(
         self, input_word_embs: torch.Tensor, mask: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
-        input_word_embs: (batch_size, seq_len, word_emb_dim)
+        input_word_embs: (batch_size, seq_len, enc_block_hidden_dim)
         mask: (batch_size, seq_len)
 
         output:
             encoded: (batch_size, seq_len, enc_block_hidden_dim)
-            projected_input_word_embs: (batch_size, seq_len, enc_block_hidden_dim)
-                Useful for observation generation pretraining
         """
-        # (batch_size, seq_len, word_emb_dim)
-        projected = self.word_emb_prj(input_word_embs)
-        output = projected
+        output = input_word_embs
         # (batch_size, seq_len, enc_block_hidden_dim)
         for enc_block in self.enc_blocks:
             output = enc_block(output, mask)
         # (batch_size, seq_len, enc_block_hidden_dim)
 
-        return output, projected
+        return output
 
 
 class ContextQueryAttention(nn.Module):

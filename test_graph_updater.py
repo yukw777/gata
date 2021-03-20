@@ -252,16 +252,15 @@ def test_text_enc_block(
 
 
 @pytest.mark.parametrize(
-    "word_emb_dim,num_enc_blocks,enc_block_num_conv_layers,enc_block_kernel_size,"
+    "num_enc_blocks,enc_block_num_conv_layers,enc_block_kernel_size,"
     "enc_block_hidden_dim,enc_block_num_heads,batch_size,seq_len",
     [
-        (10, 1, 1, 3, 8, 1, 1, 1),
-        (10, 1, 1, 3, 8, 1, 2, 5),
-        (20, 3, 5, 5, 10, 5, 3, 7),
+        (1, 1, 3, 8, 1, 1, 1),
+        (1, 1, 3, 8, 1, 2, 5),
+        (3, 5, 5, 10, 5, 3, 7),
     ],
 )
 def test_text_encoder(
-    word_emb_dim,
     num_enc_blocks,
     enc_block_num_conv_layers,
     enc_block_kernel_size,
@@ -271,7 +270,6 @@ def test_text_encoder(
     seq_len,
 ):
     text_encoder = TextEncoder(
-        word_emb_dim,
         num_enc_blocks,
         enc_block_num_conv_layers,
         enc_block_kernel_size,
@@ -279,18 +277,12 @@ def test_text_encoder(
         enc_block_num_heads,
     )
     # random word ids and increasing masks
-    encoded, projected = text_encoder(
-        torch.rand(batch_size, seq_len, word_emb_dim),
+    assert text_encoder(
+        torch.rand(batch_size, seq_len, enc_block_hidden_dim),
         torch.tensor(
             [[1.0] * (i + 1) + [0.0] * (seq_len - i - 1) for i in range(batch_size)]
         ),
-    )
-    assert encoded.size() == (
-        batch_size,
-        seq_len,
-        enc_block_hidden_dim,
-    )
-    assert projected.size() == (
+    ).size() == (
         batch_size,
         seq_len,
         enc_block_hidden_dim,
