@@ -521,8 +521,10 @@ class GraphUpdaterObsGen(pl.LightningModule):
         hiddens: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         results = self.process_batch(batch, h_t=hiddens)
+        loss = torch.cat(results["losses"]).mean()
+        self.log("train_loss", loss, prog_bar=True)
         return {
-            "loss": torch.cat(results["losses"]).mean(),
+            "loss": loss,
             "hiddens": results["hiddens"][-1],
         }
 
