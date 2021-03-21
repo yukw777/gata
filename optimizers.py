@@ -16,7 +16,7 @@ class RAdam(Optimizer):
         eps=1e-8,
         weight_decay=0,
         degenerated_to_sgd=True,
-        **kwargs,
+        buffer=None,
     ):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
@@ -37,7 +37,10 @@ class RAdam(Optimizer):
                 if "betas" in param and (
                     param["betas"][0] != betas[0] or param["betas"][1] != betas[1]
                 ):
-                    param["buffer"] = [[None, None, None] for _ in range(10)]
+                    if buffer is None:
+                        param["buffer"] = [[None, None, None] for _ in range(10)]
+                    else:
+                        param["buffer"] = buffer
         defaults = dict(
             lr=lr,
             betas=betas,
