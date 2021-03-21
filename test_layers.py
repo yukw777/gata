@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn.functional as F
+import torch.nn as nn
 
 from layers import (
     RelationalGraphConvolution,
@@ -14,6 +15,7 @@ from layers import (
     TextEncoder,
     ContextQueryAttention,
     ReprAggregator,
+    EncoderMixin,
 )
 from utils import increasing_mask
 
@@ -366,3 +368,58 @@ def test_repr_aggr(hidden_dim, batch_size, repr1_seq_len, repr2_seq_len):
     )
     assert repr12.size() == (batch_size, repr1_seq_len, hidden_dim)
     assert repr21.size() == (batch_size, repr2_seq_len, hidden_dim)
+
+
+@pytest.mark.parametrize(
+    "num_words,hidden_dim,node_emb_dim,rel_emb_dim,num_node,num_relations,"
+    "batch_size,seq_len",
+    [
+        (100, 12, 24, 36, 10, 12, 5, 6),
+    ],
+)
+def test_encoder_mixin(
+    num_words,
+    hidden_dim,
+    node_emb_dim,
+    rel_emb_dim,
+    num_node,
+    num_relations,
+    batch_size,
+    seq_len,
+):
+    class TestEncoder(EncoderMixin, nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.word_embeddings = nn.Embedding(num_words, hidden_dim)
+            self.text_encoder = TextEncoder(1, 1, 1, hidden_dim, 1)
+            self.graph_encoder = GraphEncoder(
+                hidden_dim + node_emb_dim,
+                hidden_dim + rel_emb_dim,
+                num_relations,
+                [hidden_dim],
+                1,
+            )
+            self.node_embeddings = nn.Embedding(num_node, node_emb_dim)
+            self.relation_embeddings = nn.Embedding(num_relations, rel_emb_dim)
+
+            self.node_name_word_ids = torch.randint(num_words, (num_node, 3))
+            self.node_name_mask = increasing_mask(num_node, 3)
+            self.rel_name_word_ids = torch.randint(num_words, (num_relations, 2))
+            self.rel_name_mask = increasing_mask(num_relations, 2)
+
+    te = TestEncoder()
+    assert (
+        te.encode_text(
+            torch.randint(num_words, (batch_size, seq_len)),
+            increasing_mask(batch_size, seq_len),
+        ).size()
+        == (batch_size, seq_len, hidden_dim)
+    )
+    assert te.get_node_features().size() == (num_node, hidden_dim + node_emb_dim)
+    assert te.get_relation_features().size() == (
+        num_relations,
+        hidden_dim + rel_emb_dim,
+    )
+    assert te.encode_graph(
+        torch.rand(batch_size, num_relations, num_node, num_node)
+    ).size() == (batch_size, num_node, hidden_dim)

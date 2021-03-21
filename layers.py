@@ -2,10 +2,11 @@ import torch
 import torch.nn as nn
 import itertools
 import math
+import abc
 
 from typing import List, Tuple
 
-from utils import masked_softmax
+from utils import masked_softmax, masked_mean
 
 
 class RelationalGraphConvolution(nn.Module):
@@ -586,3 +587,74 @@ class ReprAggregator(nn.Module):
             self.prj(self.cqattn(repr1, repr2, repr1_mask, repr2_mask)),
             self.prj(self.cqattn(repr2, repr1, repr2_mask, repr1_mask)),
         )
+
+
+class EncoderMixin(abc.ABC):
+    word_embeddings: nn.Module
+    text_encoder: nn.Module
+    graph_encoder: nn.Module
+    node_embeddings: nn.Embedding
+    relation_embeddings: nn.Embedding
+
+    node_name_word_ids: torch.Tensor
+    node_name_mask: torch.Tensor
+    rel_name_word_ids: torch.Tensor
+    rel_name_mask: torch.Tensor
+
+    def encode_text(self, word_ids: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+        """
+        word_ids: (batch, seq_len)
+        mask: (batch, seq_len)
+
+        output: (batch, seq_len, text_encoder.hidden_dim)
+        """
+        word_embs = self.word_embeddings(word_ids)
+        # (batch, seq_len, text_encoder.hidden_dim)
+        return self.text_encoder(word_embs, mask)
+        # (batch, seq_len, text_encoder.hidden_dim)
+
+    def get_node_features(self) -> torch.Tensor:
+        """
+        Return node features by concatenating the masked mean
+        node name embeddings and node embeddings.
+
+        output: (num_node, text_encoder.hidden_dim + node_emb_dim)
+        """
+        node_name_embeddings = masked_mean(
+            self.word_embeddings(self.node_name_word_ids),
+            self.node_name_mask,  # type: ignore
+        )
+        # (num_node, hidden_dim)
+        return torch.cat([node_name_embeddings, self.node_embeddings.weight], dim=1)
+        # (num_node, hidden_dim + node_emb_dim)
+
+    def get_relation_features(self) -> torch.Tensor:
+        """
+        Return relation features by concatenating the masked mean
+        relation name embeddings and relation embeddings.
+
+        output: (num_relations, text_encoder.hidden_dim + relation_emb_dim)
+        """
+        rel_name_embeddings = masked_mean(
+            self.word_embeddings(self.rel_name_word_ids),
+            self.rel_name_mask,  # type: ignore
+        )
+        # (num_relations, hidden_dim)
+        return torch.cat([rel_name_embeddings, self.relation_embeddings.weight], dim=1)
+        # (num_relations, hidden_dim + relation_emb_dim)
+
+    def encode_graph(self, adj: torch.Tensor) -> torch.Tensor:
+        """
+        adj: (batch, num_relation, num_node, num_node)
+
+        output: (batch, num_node, graph_encoder.hidden_dim)
+        """
+        batch_size = adj.size(0)
+        node_features = self.get_node_features().unsqueeze(0).expand(batch_size, -1, -1)
+        # (batch, num_node, hidden_dim + node_emb_dim)
+        relation_features = (
+            self.get_relation_features().unsqueeze(0).expand(batch_size, -1, -1)
+        )
+        # (batch, num_relations, hidden_dim + relation_emb_dim)
+        return self.graph_encoder(node_features, relation_features, adj)
+        # (batch, num_node, hidden_dim)
