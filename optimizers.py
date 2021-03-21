@@ -16,6 +16,7 @@ class RAdam(Optimizer):
         eps=1e-8,
         weight_decay=0,
         degenerated_to_sgd=True,
+        **kwargs,
     ):
         if not 0.0 <= lr:
             raise ValueError("Invalid learning rate: {}".format(lr))
