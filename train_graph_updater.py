@@ -448,16 +448,19 @@ class GraphUpdaterObsGen(pl.LightningModule):
     def process_batch(
         self,
         batch: List[Dict[str, torch.Tensor]],
+        h_t: Optional[torch.Tensor] = None,
     ) -> Dict[str, List[torch.Tensor]]:
-        h_t: Optional[torch.Tensor] = None
         losses: List[torch.Tensor] = []
         f1s: List[torch.Tensor] = []
         preds: List[torch.Tensor] = []
         decoded: List[torch.Tensor] = []
+        hiddens: List[torch.Tensor] = []
         eos_id = self.preprocessor.word_to_id(EOS)
         for i, episode_data in enumerate(batch):
             results = self(episode_data, rnn_prev_hidden=h_t)
             h_t = results["h_t"]
+            assert h_t is not None
+            hiddens.append(h_t)
             losses.append(
                 (
                     torch.sum(
@@ -502,7 +505,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
                         )
                     )
 
-        results = {"losses": losses}
+        results = {"losses": losses, "hiddens": hiddens}
         if self.training:
             return results
 
@@ -515,10 +518,13 @@ class GraphUpdaterObsGen(pl.LightningModule):
         self,
         batch: List[Dict[str, torch.Tensor]],
         batch_idx: int,
-        hiddens: torch.Tensor,
-    ) -> torch.Tensor:
-        results = self.process_batch(batch)
-        return torch.cat(results["losses"]).mean()
+        hiddens: Optional[torch.Tensor],
+    ) -> Dict[str, torch.Tensor]:
+        results = self.process_batch(batch, h_t=hiddens)
+        return {
+            "loss": torch.cat(results["losses"]).mean(),
+            "hiddens": results["hiddens"][-1],
+        }
 
     def tbptt_split_batch(self, batch, split_size: int):
         return list(batchify(batch, split_size))
