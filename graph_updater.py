@@ -3,11 +3,11 @@ import torch.nn as nn
 
 from typing import Optional, Dict
 
-from layers import GraphEncoder, TextEncoder, ReprAggregator
+from layers import GraphEncoder, TextEncoder, ReprAggregator, EncoderMixin
 from utils import masked_mean
 
 
-class GraphUpdater(nn.Module):
+class GraphUpdater(EncoderMixin, nn.Module):
     def __init__(
         self,
         hidden_dim: int,
@@ -148,36 +148,6 @@ class GraphUpdater(nn.Module):
         return torch.cat([h, h.transpose(2, 3)], dim=1)
         # (batch, num_relation, num_node, num_node)
 
-    def get_node_features(self) -> torch.Tensor:
-        """
-        Return node features by concatenating the masked mean
-        node name embeddings and node embeddings.
-
-        output: (num_node, hidden_dim + node_emb_dim)
-        """
-        node_name_embeddings = masked_mean(
-            self.word_embeddings(self.node_name_word_ids),
-            self.node_name_mask,  # type: ignore
-        )
-        # (num_node, hidden_dim)
-        return torch.cat([node_name_embeddings, self.node_embeddings.weight], dim=1)
-        # (num_node, hidden_dim + node_emb_dim)
-
-    def get_relation_features(self) -> torch.Tensor:
-        """
-        Return relation features by concatenating the masked mean
-        relation name embeddings and relation embeddings.
-
-        output: (num_relations, hidden_dim + relation_emb_dim)
-        """
-        rel_name_embeddings = masked_mean(
-            self.word_embeddings(self.rel_name_word_ids),
-            self.rel_name_mask,  # type: ignore
-        )
-        # (num_relations, hidden_dim)
-        return torch.cat([rel_name_embeddings, self.relation_embeddings.weight], dim=1)
-        # (num_relations, hidden_dim + relation_emb_dim)
-
     def forward(
         self,
         obs_word_ids: torch.Tensor,
@@ -209,15 +179,20 @@ class GraphUpdater(nn.Module):
         """
         batch_size = obs_word_ids.size(0)
 
-        # encode text observations and previous actions
-        obs_word_embs = self.word_embeddings(obs_word_ids)
-        # (batch, obs_len, hidden_dim)
-        encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
-        # encoded_obs: (batch, obs_len, hidden_dim)
-        # prj_obs: (batch, obs_len, hidden_dim)
-        prev_action_embs = self.word_embeddings(prev_action_word_ids)
-        # (batch, prev_action_len, hidden_dim)
-        encoded_prev_action = self.text_encoder(prev_action_embs, prev_action_mask)
+        # encode text observations
+        if self.pretraining:
+            # we don't use encode_text here
+            # b/c we want to return obs_word_embs for pretraining
+            obs_word_embs = self.word_embeddings(obs_word_ids)
+            # (batch, obs_len, hidden_dim)
+            encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
+            # encoded_obs: (batch, obs_len, hidden_dim)
+            # prj_obs: (batch, obs_len, hidden_dim)
+        else:
+            encoded_obs = self.encode_text(obs_word_ids, obs_mask)
+
+        # encode previous actions
+        encoded_prev_action = self.encode_text(prev_action_word_ids, prev_action_mask)
         # (batch, prev_action_len, hidden_dim)
 
         # decode the previous graph
@@ -235,17 +210,25 @@ class GraphUpdater(nn.Module):
             # (batch, num_relation, num_node, num_node)
 
         # encode the previous graph
-        node_features = self.get_node_features().unsqueeze(0).expand(batch_size, -1, -1)
-        # (batch, num_node, hidden_dim + node_emb_dim)
-        relation_features = (
-            self.get_relation_features().unsqueeze(0).expand(batch_size, -1, -1)
-        )
-        # (batch, num_relations, hidden_dim + relation_emb_dim)
-
-        encoded_prev_graph = self.graph_encoder(
-            node_features, relation_features, prev_graph
-        )
-        # (batch, num_node, hidden_dim)
+        if self.pretraining:
+            # we don't want to use encode_graph here
+            # b/c we're going to use node_features and relation_features
+            # for the current graph later
+            node_features = (
+                self.get_node_features().unsqueeze(0).expand(batch_size, -1, -1)
+            )
+            # (batch, num_node, hidden_dim + node_emb_dim)
+            relation_features = (
+                self.get_relation_features().unsqueeze(0).expand(batch_size, -1, -1)
+            )
+            # (batch, num_relations, hidden_dim + relation_emb_dim)
+            encoded_prev_graph = self.graph_encoder(
+                node_features, relation_features, prev_graph
+            )
+            # (batch, num_node, hidden_dim)
+        else:
+            encoded_prev_graph = self.encode_graph(prev_graph)
+            # (batch, num_node, hidden_dim)
 
         delta_g = self.f_delta(
             encoded_prev_graph,
