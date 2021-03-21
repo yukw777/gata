@@ -569,7 +569,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         # decode all the decoded observations
         decoded_obs_word_ids = [
             word_ids
-            for decoded_obs_word_ids in preds
+            for decoded_obs_word_ids in decoded
             for word_ids in decoded_obs_word_ids.tolist()
         ]
         return list(
