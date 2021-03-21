@@ -750,7 +750,7 @@ class GraphUpdater(nn.Module):
         Return relation features by concatenating the masked mean
         relation name embeddings and relation embeddings.
 
-        output: (num_node, hidden_dim + relation_emb_dim)
+        output: (num_relations, hidden_dim + relation_emb_dim)
         """
         rel_name_embeddings = masked_mean(
             self.word_embeddings(self.rel_name_word_ids),
