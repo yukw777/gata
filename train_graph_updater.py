@@ -543,7 +543,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         hiddens: Optional[torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         results = self.process_batch(batch, h_t=hiddens)
-        loss = torch.cat(results["losses"]).mean()
+        loss = torch.stack(results["losses"]).mean()
         self.log("train_loss", loss, prog_bar=True)
         return {
             "loss": loss,
@@ -560,7 +560,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
     ) -> List[Tuple[str, str, str]]:
         results = self.process_batch(batch)
         self.log(
-            log_key_prefix + "loss", torch.cat(results["losses"]).mean(), sync_dist=True
+            log_key_prefix + "loss",
+            torch.stack(results["losses"]).mean(),
+            sync_dist=True,
         )
         self.log(log_key_prefix + "f1", torch.stack(results["f1s"]).mean())
         return self.gen_decoded_groundtruth_pred_table(
