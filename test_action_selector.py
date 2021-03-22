@@ -29,8 +29,8 @@ def test_action_scorer(
         increasing_mask(num_action_cands, action_cand_len, start_with_zero=True)
         .unsqueeze(0)
         .expand(batch_size, -1, -1),
-        torch.rand(batch_size, num_node, hidden_dim),
         torch.rand(batch_size, obs_len, hidden_dim),
+        torch.rand(batch_size, num_node, hidden_dim),
         increasing_mask(batch_size, obs_len),
     )
     assert action_scores.size() == (batch_size, num_action_cands)

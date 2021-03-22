@@ -24,20 +24,20 @@ class ActionScorer(nn.Module):
     def forward(
         self,
         enc_action_cands: torch.Tensor,
-        enc_action_cand_mask: torch.Tensor,
-        h_go: torch.Tensor,
+        action_cand_mask: torch.Tensor,
         h_og: torch.Tensor,
+        h_go: torch.Tensor,
         obs_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         enc_action_cands: encoded action candidates produced by TextEncoder.
             (batch, num_action_cands, action_cand_len, hidden_dim)
-        enc_action_cand_mask: mask for encoded action candidates.
+        action_cand_mask: mask for encoded action candidates.
             (batch, num_action_cands, action_cand_len)
-        h_go: aggregated node representation of the current graph with the observation.
-            (batch, num_node, hidden_dim)
         h_og: aggregated representation of the observation with the current graph.
             (batch, obs_len, hidden_dim)
+        h_go: aggregated node representation of the current graph with the observation.
+            (batch, num_node, hidden_dim)
         obs_mask: mask for the observations. (batch, obs_len)
 
         output:
@@ -50,23 +50,13 @@ class ActionScorer(nn.Module):
         # calculate the masked mean and then restore the original dims
         flat_enc_action_cands = enc_action_cands.flatten(end_dim=1)
         # (batch * num_action_cands, action_cand_len, hidden_dim)
-        flat_enc_action_cand_mask = enc_action_cand_mask.flatten(end_dim=1)
+        flat_action_cand_mask = action_cand_mask.flatten(end_dim=1)
         # (batch * num_action_cands, action_cand_len)
-        action_cand_repr = masked_mean(flat_enc_action_cands, flat_enc_action_cand_mask)
+        action_cand_repr = masked_mean(flat_enc_action_cands, flat_action_cand_mask)
         # (batch * num_action_cands, hidden_dim)
         batch_size = enc_action_cands.size(0)
         action_cand_repr = action_cand_repr.view(batch_size, -1, self.hidden_dim)
         # (batch, num_action_cands, hidden_dim)
-
-        # get the graph representation
-        h_go_t = h_go.transpose(0, 1)
-        graph_repr, _ = self.self_attn_graph(h_go_t, h_go_t, h_go_t)
-        # (num_node, batch, hidden_dim)
-        graph_repr = graph_repr.transpose(0, 1)
-        # (batch, num_node, hidden_dim)
-        # mean pooling. no masks necessary as we use all the nodes
-        graph_repr = graph_repr.mean(dim=1)
-        # (batch, hidden_dim)
 
         # get the obs representation
         h_og_t = h_og.transpose(0, 1)
@@ -80,6 +70,16 @@ class ActionScorer(nn.Module):
         obs_repr = masked_mean(obs_repr, obs_mask)
         # (batch, hidden_dim)
 
+        # get the graph representation
+        h_go_t = h_go.transpose(0, 1)
+        graph_repr, _ = self.self_attn_graph(h_go_t, h_go_t, h_go_t)
+        # (num_node, batch, hidden_dim)
+        graph_repr = graph_repr.transpose(0, 1)
+        # (batch, num_node, hidden_dim)
+        # mean pooling. no masks necessary as we use all the nodes
+        graph_repr = graph_repr.mean(dim=1)
+        # (batch, hidden_dim)
+
         # expand the graph and obs representations
         num_action_cands = enc_action_cands.size(1)
         expanded_graph_repr = graph_repr.unsqueeze(1).expand(-1, num_action_cands, -1)
@@ -89,7 +89,7 @@ class ActionScorer(nn.Module):
 
         # calculate the action mask by selecting any action candidate
         # that had unmasked tokens
-        action_mask = enc_action_cand_mask.bool().any(-1).float()
+        action_mask = action_cand_mask.bool().any(-1).float()
         # (batch, num_action_cands)
 
         # concatenate them with encoded action candidates and
