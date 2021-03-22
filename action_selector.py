@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 
-from typing import Tuple
-
+from layers import TextEncoder, GraphEncoder, ReprAggregator, EncoderMixin
 from utils import masked_mean
 
 
@@ -28,7 +27,7 @@ class ActionScorer(nn.Module):
         h_og: torch.Tensor,
         h_go: torch.Tensor,
         obs_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         enc_action_cands: encoded action candidates produced by TextEncoder.
             (batch, num_action_cands, action_cand_len, hidden_dim)
@@ -40,9 +39,7 @@ class ActionScorer(nn.Module):
             (batch, num_node, hidden_dim)
         obs_mask: mask for the observations. (batch, obs_len)
 
-        output:
-            action scores: (batch, num_action_cands)
-            action mask: (batch, num_action_cands)
+        output: action scores of shape (batch, num_action_cands)
         """
         # get the action candidate representation
         # perform masked mean pooling over the action_cand_len dim
@@ -107,4 +104,157 @@ class ActionScorer(nn.Module):
         output *= action_mask
         # (batch, num_action_cands)
 
-        return output, action_mask
+        return output
+
+
+class ActionSelector(EncoderMixin, nn.Module):
+    def __init__(
+        self,
+        hidden_dim: int,
+        num_words: int,
+        word_emb_dim: int,
+        num_nodes: int,
+        node_emb_dim: int,
+        num_relations: int,
+        relation_emb_dim: int,
+        text_encoder_num_blocks: int,
+        text_encoder_num_conv_layers: int,
+        text_encoder_kernel_size: int,
+        text_encoder_num_heads: int,
+        graph_encoder_num_cov_layers: int,
+        graph_encoder_num_bases: int,
+        action_scorer_num_heads: int,
+        epsilon: float,
+        node_name_word_ids: torch.Tensor,
+        node_name_mask: torch.Tensor,
+        rel_name_word_ids: torch.Tensor,
+        rel_name_mask: torch.Tensor,
+    ) -> None:
+        super().__init__()
+
+        self.num_nodes = num_nodes
+        self.num_relations = num_relations
+        self.epsilon = epsilon
+
+        # word embeddings
+        self.word_embeddings = nn.Sequential(
+            nn.Embedding(num_words, word_emb_dim),
+            nn.Linear(word_emb_dim, hidden_dim, bias=False),
+        )
+
+        # text encoder
+        self.text_encoder = TextEncoder(
+            text_encoder_num_blocks,
+            text_encoder_num_conv_layers,
+            text_encoder_kernel_size,
+            hidden_dim,
+            text_encoder_num_heads,
+        )
+
+        # node and relation embeddings
+        self.node_embeddings = nn.Embedding(num_nodes, node_emb_dim)
+        self.relation_embeddings = nn.Embedding(num_relations, relation_emb_dim)
+
+        # save the node and relation name word ids and masks as buffers.
+        # GATA used the mean word embeddings of the node and relation name words.
+        # These are static as we have a fixed set of node and relation names.
+        assert node_name_word_ids.dtype == torch.int64
+        assert node_name_mask.dtype == torch.float
+        assert node_name_word_ids.size() == node_name_mask.size()
+        assert node_name_word_ids.size(0) == self.num_nodes
+        assert node_name_mask.size(0) == self.num_nodes
+        assert rel_name_word_ids.dtype == torch.int64
+        assert rel_name_mask.dtype == torch.float
+        assert rel_name_word_ids.size() == rel_name_mask.size()
+        assert rel_name_word_ids.size(0) == self.num_relations
+        assert rel_name_mask.size(0) == self.num_relations
+        self.register_buffer("node_name_word_ids", node_name_word_ids)
+        self.register_buffer("node_name_mask", node_name_mask)
+        self.register_buffer("rel_name_word_ids", rel_name_word_ids)
+        self.register_buffer("rel_name_mask", rel_name_mask)
+
+        # graph encoder
+        self.graph_encoder = GraphEncoder(
+            hidden_dim + node_emb_dim,
+            hidden_dim + relation_emb_dim,
+            num_relations,
+            [hidden_dim] * graph_encoder_num_cov_layers,
+            graph_encoder_num_bases,
+        )
+
+        # representation aggregator
+        self.repr_aggr = ReprAggregator(hidden_dim)
+
+        # action scorer
+        self.action_scorer = ActionScorer(hidden_dim, action_scorer_num_heads)
+
+    def forward(
+        self,
+        obs_word_ids: torch.Tensor,
+        obs_mask: torch.Tensor,
+        current_graph: torch.Tensor,
+        action_cand_word_ids: torch.Tensor,
+        action_cand_mask: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        obs_word_ids: (batch, obs_len)
+        obs_mask: (batch, obs_len)
+        current_graph: (batch, num_relation, num_node, num_node)
+        action_cand_word_ids: (batch, num_action_cands, action_cand_len)
+        action_cand_mask: (batch, num_action_cands, action_cand_len)
+
+        output: chosen actions of shape (batch)
+        """
+        # TODO: greedy and random actions
+
+        # encode text observations
+        encoded_obs = self.encode_text(obs_word_ids, obs_mask)
+        # (batch, obs_len, hidden_dim)
+
+        # encode the current graph
+        encoded_curr_graph = self.encode_graph(current_graph)
+        # (batch, num_node, hidden_dim)
+
+        # aggregate obs and current graph representations
+        batch_size = obs_word_ids.size(0)
+        h_og, h_go = self.repr_aggr(
+            encoded_obs,
+            encoded_curr_graph,
+            obs_mask,
+            # no masks necessary for the graph
+            torch.ones(batch_size, self.num_nodes, device=encoded_obs.device),
+        )
+        # h_og: (batch, obs_len, hidden_dim)
+        # h_go: (batch, num_node, hidden_dim)
+
+        # encode candidate actions
+        _, num_action_cands, action_cand_len = action_cand_word_ids.size()
+        enc_action_cands = self.encode_text(
+            action_cand_word_ids.flatten(end_dim=1), action_cand_mask.flatten(end_dim=1)
+        ).view(batch_size, num_action_cands, action_cand_len, -1)
+        # (batch, num_action_cands, action_cand_len, hidden_dim)
+
+        action_scores = self.action_scorer(
+            enc_action_cands, action_cand_mask, h_og, h_go, obs_mask
+        )
+        # action_scores: (batch, num_action_cands)
+
+        # get the actions with max q (action score)
+        max_q_actions = action_scores.argmax(dim=1)
+        # (batch)
+
+        # randomly draw an action
+        # action_scores is already masked, so we want to pick a random one with equal
+        # probabilities from actions with nonzero scores
+        random_actions = torch.multinomial((action_scores != 0).float(), 1).squeeze()
+        # (batch)
+
+        # epsilon greedy: epsilon is the probability for using random actions
+        choose_random = torch.bernoulli(
+            torch.tensor([self.epsilon] * batch_size, device=random_actions.device)
+        )
+        # (batch)
+        return (
+            choose_random * random_actions + (1 - choose_random) * max_q_actions
+        ).long()
+        # (batch)
