@@ -451,6 +451,31 @@ class GraphUpdaterObsGen(pl.LightningModule):
         batch: List[Dict[str, torch.Tensor]],
         h_t: Optional[torch.Tensor] = None,
     ) -> Dict[str, List[torch.Tensor]]:
+        """
+        batch: [
+            {
+                'obs_word_ids': tensor of shape (batch, obs_len),
+                'obs_mask': tensor of shape (batch, obs_len),
+                'prev_action_word_ids': tensor of shape (batch, prev_action_len),
+                'prev_action_mask': tensor of shape (batch, prev_action_len),
+                'groundtruth_obs_word_ids': tensor of shape (batch, obs_len),
+                'step_mask': tensor of shape (batch),
+            },
+            ...
+        ]
+        h_t: (batch, hidden_dim)
+
+        output: {
+            'losses': [scalar masked mean batch loss, ...], length == max_episode_len
+            'hiddens': [rnn hidden of shape (batch, hidden_dim), ...],
+                length == max_episode_len
+            'preds': [predicted word ids of shape (batch, obs_len), ...],
+                length == max_episode_len, eval only
+            'decoded': [decoded word ids of shape (batch, decoded_len), ...],
+                length == max_episode_len, eval only
+            'f1s': [scalar f1 scores, ...], length <= max_episode_len * batch, eval only
+        }
+        """
         losses: List[torch.Tensor] = []
         f1s: List[torch.Tensor] = []
         preds: List[torch.Tensor] = []
@@ -463,12 +488,8 @@ class GraphUpdaterObsGen(pl.LightningModule):
             assert h_t is not None
             hiddens.append(h_t)
             losses.append(
-                (
-                    torch.sum(
-                        results["batch_loss"] * episode_data["step_mask"].unsqueeze(-1)
-                    )
-                    / episode_data["step_mask"].sum()
-                ).unsqueeze(0)
+                torch.sum(results["batch_loss"] * episode_data["step_mask"])
+                / episode_data["step_mask"].sum()
             )
             if not self.training:
                 preds.append(results["pred_obs_word_ids"])
