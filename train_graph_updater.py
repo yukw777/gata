@@ -538,7 +538,9 @@ class GraphUpdaterObsGen(pl.LightningModule):
         log_key_prefix: str,
     ) -> List[Tuple[str, str, str]]:
         results = self.process_batch(batch)
-        self.log(log_key_prefix + "loss", torch.cat(results["losses"]).mean())
+        self.log(
+            log_key_prefix + "loss", torch.cat(results["losses"]).mean(), sync_dist=True
+        )
         self.log(log_key_prefix + "f1", torch.stack(results["f1s"]).mean())
         return self.gen_decoded_groundtruth_pred_table(
             batch, results["preds"], results["decoded"]
