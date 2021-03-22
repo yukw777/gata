@@ -138,6 +138,24 @@ def test_graph_updater_obs_gen_forward(
         assert results["decoded_obs_word_ids"].ndim == 2
 
 
+@pytest.mark.parametrize("batch_size,num_node,prev_action_len", [(1, 3, 5), (3, 10, 7)])
+def test_graph_updater_obs_gen_greedy_decode(batch_size, num_node, prev_action_len):
+    g = GraphUpdaterObsGen()
+    decoded = g.greedy_decode(
+        torch.rand(batch_size, num_node, g.hparams.hidden_dim),
+        torch.rand(batch_size, prev_action_len, g.hparams.hidden_dim),
+        torch.randint(2, (batch_size, prev_action_len)).float(),
+    )
+    assert decoded.ndim == 2
+    assert decoded.size(0) == batch_size
+    # [BOS] + max_decode_len
+    assert decoded.size(1) <= g.hparams.max_decode_len + 1
+    # Always start with BOS
+    assert decoded[:, 0].equal(
+        torch.tensor([g.preprocessor.word_to_id(BOS)] * batch_size)
+    )
+
+
 def test_main(tmp_path):
     with initialize(config_path="train_graph_updater_conf"):
         cfg = compose(

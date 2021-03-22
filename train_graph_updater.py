@@ -384,7 +384,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
             graph_updater_results["h_ag"],
             episode_data["prev_action_mask"],
         )
-        # (batch, obs_len)
+        # (batch, decoded_len)
 
         return results
 
@@ -400,7 +400,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         prev_action_hidden: (batch, prev_action_len, hidden_dim)
         prev_action_mask: (batch, prev_action_len)
 
-        output: (batch, obs_len)
+        output: (batch, decoded_len)
         """
         # start with bos tokens
         batch_size = node_hidden.size(0)
