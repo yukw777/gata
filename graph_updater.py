@@ -179,18 +179,6 @@ class GraphUpdater(EncoderMixin, nn.Module):
         """
         batch_size = obs_word_ids.size(0)
 
-        # encode text observations
-        if self.pretraining:
-            # we don't use encode_text here
-            # b/c we want to return obs_word_embs for pretraining
-            obs_word_embs = self.word_embeddings(obs_word_ids)
-            # (batch, obs_len, hidden_dim)
-            encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
-            # encoded_obs: (batch, obs_len, hidden_dim)
-            # prj_obs: (batch, obs_len, hidden_dim)
-        else:
-            encoded_obs = self.encode_text(obs_word_ids, obs_mask)
-
         # encode previous actions
         encoded_prev_action = self.encode_text(prev_action_word_ids, prev_action_mask)
         # (batch, prev_action_len, hidden_dim)
@@ -209,8 +197,17 @@ class GraphUpdater(EncoderMixin, nn.Module):
             prev_graph = self.f_d(rnn_prev_hidden)
             # (batch, num_relation, num_node, num_node)
 
-        # encode the previous graph
         if self.pretraining:
+            # encode text observations
+            # we don't use encode_text here
+            # b/c we want to return obs_word_embs for pretraining
+            obs_word_embs = self.word_embeddings(obs_word_ids)
+            # (batch, obs_len, hidden_dim)
+            encoded_obs = self.text_encoder(obs_word_embs, obs_mask)
+            # encoded_obs: (batch, obs_len, hidden_dim)
+            # prj_obs: (batch, obs_len, hidden_dim)
+
+            # encode the previous graph
             # we don't want to use encode_graph here
             # b/c we're going to use node_features and relation_features
             # for the current graph later
@@ -227,6 +224,11 @@ class GraphUpdater(EncoderMixin, nn.Module):
             )
             # (batch, num_node, hidden_dim)
         else:
+            # encode text observations
+            encoded_obs = self.encode_text(obs_word_ids, obs_mask)
+            # encoded_obs: (batch, obs_len, hidden_dim)
+
+            # encode the previous graph
             encoded_prev_graph = self.encode_graph(prev_graph)
             # (batch, num_node, hidden_dim)
 
