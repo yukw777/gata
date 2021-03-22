@@ -100,6 +100,44 @@ def test_graph_updater_obs_gen_default_init():
     assert g.graph_updater.rel_name_mask.size() == (len(g.relation_vocab), 2)
 
 
+@pytest.mark.parametrize("training", [True, False])
+@pytest.mark.parametrize("rnn_prev_hidden", [True, False])
+@pytest.mark.parametrize(
+    "batch_size,obs_len,prev_action_len",
+    [
+        (1, 10, 4),
+        (4, 12, 8),
+    ],
+)
+def test_graph_updater_obs_gen_forward(
+    batch_size, obs_len, prev_action_len, rnn_prev_hidden, training
+):
+    g = GraphUpdaterObsGen()
+    g.train(training)
+    episode_data = {
+        "obs_word_ids": torch.randint(g.num_words, (batch_size, obs_len)),
+        "obs_mask": torch.randint(2, (batch_size, obs_len)).float(),
+        "prev_action_word_ids": torch.randint(
+            g.num_words, (batch_size, prev_action_len)
+        ),
+        "prev_action_mask": torch.randint(2, (batch_size, prev_action_len)).float(),
+        "groundtruth_obs_word_ids": torch.randint(g.num_words, (batch_size, obs_len)),
+    }
+    results = g(
+        episode_data,
+        rnn_prev_hidden=torch.rand(batch_size, g.hparams.hidden_dim)
+        if rnn_prev_hidden
+        else None,
+    )
+    assert results["h_t"].size() == (batch_size, g.hparams.hidden_dim)
+    assert results["batch_loss"].size() == (batch_size,)
+    if not training:
+        assert results["pred_obs_word_ids"].size() == (batch_size, obs_len)
+        # decoded_obs_word_ids has variable lengths
+        assert results["decoded_obs_word_ids"].size(0) == batch_size
+        assert results["decoded_obs_word_ids"].ndim == 2
+
+
 def test_main(tmp_path):
     with initialize(config_path="train_graph_updater_conf"):
         cfg = compose(

@@ -236,13 +236,13 @@ class GraphUpdaterObsGen(pl.LightningModule):
             self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
 
         # load pretrained word embedding and freeze it
-        num_words = len(self.preprocessor.word_to_id_dict)
+        self.num_words = len(self.preprocessor.word_to_id_dict)
         if pretrained_word_embedding_path is not None:
             pretrained_word_embedding = load_fasttext(
                 to_absolute_path(pretrained_word_embedding_path), self.preprocessor
             )
         else:
-            pretrained_word_embedding = nn.Embedding(num_words, word_emb_dim)
+            pretrained_word_embedding = nn.Embedding(self.num_words, word_emb_dim)
         pretrained_word_embedding.weight.requires_grad = False
 
         # load node vocab
@@ -299,7 +299,7 @@ class GraphUpdaterObsGen(pl.LightningModule):
         self.text_decoder = TextDecoder(
             text_decoder_num_blocks, hidden_dim, text_decoder_num_heads
         )
-        self.target_word_prj = nn.Linear(hidden_dim, num_words, bias=False)
+        self.target_word_prj = nn.Linear(hidden_dim, self.num_words, bias=False)
         self.ce_loss = nn.CrossEntropyLoss(
             ignore_index=self.preprocessor.pad_id, reduction="none"
         )
