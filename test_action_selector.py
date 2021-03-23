@@ -42,12 +42,12 @@ def test_action_scorer(
     "hidden_dim,num_words,word_emb_dim,num_nodes,node_emb_dim,num_relations,"
     "relation_emb_dim,text_encoder_num_blocks,text_encoder_num_conv_layers,"
     "text_encoder_kernel_size,text_encoder_num_heads,graph_encoder_num_cov_layers,"
-    "graph_encoder_num_bases,action_scorer_num_heads,epsilon,batch_size,obs_len,"
+    "graph_encoder_num_bases,action_scorer_num_heads,batch_size,obs_len,"
     "num_action_cands,action_cand_len",
     [
-        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 1.0, 1, 5, 3, 4),
-        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 0.0, 3, 5, 3, 4),
-        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 0.1, 3, 5, 3, 4),
+        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 1, 5, 3, 4),
+        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 3, 5, 3, 4),
+        (12, 100, 24, 5, 24, 10, 36, 1, 1, 3, 1, 1, 3, 1, 3, 5, 3, 4),
     ],
 )
 def test_action_selector(
@@ -65,7 +65,6 @@ def test_action_selector(
     graph_encoder_num_cov_layers,
     graph_encoder_num_bases,
     action_scorer_num_heads,
-    epsilon,
     batch_size,
     obs_len,
     num_action_cands,
@@ -86,7 +85,6 @@ def test_action_selector(
         graph_encoder_num_cov_layers,
         graph_encoder_num_bases,
         action_scorer_num_heads,
-        epsilon,
         torch.randint(num_words, (num_nodes, 3)),
         increasing_mask(num_nodes, 3),
         torch.randint(num_words, (num_relations, 3)),
@@ -102,5 +100,5 @@ def test_action_selector(
                 batch_size, num_action_cands, action_cand_len
             ),
         ).size()
-        == (batch_size,)
+        == (batch_size, num_action_cands)
     )

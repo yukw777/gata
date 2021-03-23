@@ -124,7 +124,6 @@ class ActionSelector(EncoderMixin, nn.Module):
         graph_encoder_num_cov_layers: int,
         graph_encoder_num_bases: int,
         action_scorer_num_heads: int,
-        epsilon: float,
         node_name_word_ids: torch.Tensor,
         node_name_mask: torch.Tensor,
         rel_name_word_ids: torch.Tensor,
@@ -134,7 +133,6 @@ class ActionSelector(EncoderMixin, nn.Module):
 
         self.num_nodes = num_nodes
         self.num_relations = num_relations
-        self.epsilon = epsilon
 
         # word embeddings
         self.word_embeddings = nn.Sequential(
@@ -203,10 +201,8 @@ class ActionSelector(EncoderMixin, nn.Module):
         action_cand_word_ids: (batch, num_action_cands, action_cand_len)
         action_cand_mask: (batch, num_action_cands, action_cand_len)
 
-        output: chosen actions of shape (batch)
+        output: action scores of shape (batch, num_action_cands)
         """
-        # TODO: greedy and random actions
-
         # encode text observations
         encoded_obs = self.encode_text(obs_word_ids, obs_mask)
         # (batch, obs_len, hidden_dim)
@@ -234,27 +230,7 @@ class ActionSelector(EncoderMixin, nn.Module):
         ).view(batch_size, num_action_cands, action_cand_len, -1)
         # (batch, num_action_cands, action_cand_len, hidden_dim)
 
-        action_scores = self.action_scorer(
+        return self.action_scorer(
             enc_action_cands, action_cand_mask, h_og, h_go, obs_mask
         )
-        # action_scores: (batch, num_action_cands)
-
-        # get the actions with max q (action score)
-        max_q_actions = action_scores.argmax(dim=1)
-        # (batch)
-
-        # randomly draw an action
-        # action_scores is already masked, so we want to pick a random one with equal
-        # probabilities from actions with nonzero scores
-        random_actions = torch.multinomial((action_scores != 0).float(), 1).squeeze()
-        # (batch)
-
-        # epsilon greedy: epsilon is the probability for using random actions
-        choose_random = torch.bernoulli(
-            torch.tensor([self.epsilon] * batch_size, device=random_actions.device)
-        )
-        # (batch)
-        return (
-            choose_random * random_actions + (1 - choose_random) * max_q_actions
-        ).long()
-        # (batch)
+        # (batch, num_action_cands)
