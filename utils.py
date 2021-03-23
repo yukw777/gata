@@ -1,9 +1,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import gym
+import textworld.gym
+import os
+import glob
 
 from typing import Optional, List, Sequence, Iterator, TypeVar
 from collections import Counter
+from textworld import EnvInfos
 
 from preprocessor import SpacyPreprocessor
 
@@ -116,3 +121,22 @@ def increasing_mask(
         else:
             data.append([1] * seq_len)
     return torch.tensor(data, dtype=torch.float)
+
+
+def load_textworld_games(
+    game_dir: str,
+    name: str,
+    request_infos: EnvInfos,
+    max_episode_steps: int,
+    batch_size: int,
+) -> gym.Env:
+    game_files = glob.glob(os.path.join(game_dir, "*.z8"))
+    env_id = textworld.gym.register_games(
+        game_files,
+        request_infos=request_infos,
+        batch_size=batch_size,
+        max_episode_steps=max_episode_steps,
+        name=name,
+        asynchronous=False,
+    )
+    return gym.make(env_id)

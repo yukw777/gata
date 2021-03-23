@@ -3,3 +3,4 @@ hydra-core~=1.0.0
 wandb~=0.10.0
 spacy~=3.0.3
 fairscale~=0.3.0
+textworld~=1.4.0

@@ -2,6 +2,8 @@ import torch
 import pytest
 import torch.nn.functional as F
 
+from textworld import EnvInfos
+
 from preprocessor import SpacyPreprocessor, PAD, UNK
 from utils import (
     load_fasttext,
@@ -11,6 +13,7 @@ from utils import (
     calculate_seq_f1,
     batchify,
     increasing_mask,
+    load_textworld_games,
 )
 
 
@@ -122,3 +125,31 @@ def test_increasing_mask():
     assert increasing_mask(3, 2, start_with_zero=True).equal(
         torch.tensor([[0, 0], [1, 0], [1, 1]]).float()
     )
+
+
+def test_load_textworld_games():
+    request_infos = EnvInfos()
+    request_infos.admissible_commands = True
+    request_infos.description = False
+    request_infos.location = False
+    request_infos.facts = False
+    request_infos.last_action = False
+    request_infos.game = True
+
+    max_episode_steps = 100
+    batch_size = 5
+    name = "test"
+
+    env = load_textworld_games(
+        "test-data/rl_games",
+        name,
+        request_infos,
+        max_episode_steps,
+        batch_size,
+    )
+    assert len(env.gamefiles) == 2
+    assert env.request_infos == request_infos
+    assert env.batch_size == batch_size
+    # for some reason env.spec.max_episode_steps is None
+    # assert env.spec.max_episode_steps == max_episode_steps
+    assert env.spec.id == f"tw-{name}-v0"
