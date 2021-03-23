@@ -1,6 +1,6 @@
 import torch
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from spacy.lang.en import English
 
 PAD = "<pad>"
@@ -59,6 +59,27 @@ class SpacyPreprocessor:
 
     def preprocess(self, batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(s) for s in batch])
+
+    def clean_and_preprocess(
+        self, batch: List[str]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.preprocess_tokenized([self.tokenize(self.clean(s)) for s in batch])
+
+    def clean(self, raw_str: Optional[str]) -> str:
+        """
+        Copied from the original GATA code (preproc())
+        """
+        if raw_str is None:
+            return "nothing"
+        cleaned = raw_str.replace("\n", " ")
+        if "$$$$$$$" in cleaned:
+            cleaned = cleaned.split("$$$$$$$")[-1]
+        while "  " in cleaned:
+            cleaned = cleaned.replace("  ", " ")
+        cleaned = cleaned.strip()
+        if len(cleaned) == 0:
+            return "nothing"
+        return cleaned
 
     def decode(self, batch: List[List[int]]) -> List[str]:
         return [
