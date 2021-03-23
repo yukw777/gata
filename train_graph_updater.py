@@ -20,9 +20,9 @@ from utils import (
     calculate_seq_f1,
     batchify,
 )
-from preprocessor import SpacyPreprocessor, BOS, EOS, PAD, UNK
+from preprocessor import BOS, EOS
 from graph_updater import GraphUpdater
-from layers import PositionalEncoderTensor2Tensor
+from layers import PositionalEncoderTensor2Tensor, WordNodeRelInitMixin
 from optimizers import RAdam
 from graph_updater_data import GraphUpdaterObsGenDataModule
 
@@ -181,7 +181,7 @@ class TextDecoder(nn.Module):
         return output
 
 
-class GraphUpdaterObsGen(pl.LightningModule):
+class GraphUpdaterObsGen(WordNodeRelInitMixin, pl.LightningModule):
     def __init__(
         self,
         hidden_dim: int = 8,
@@ -226,17 +226,25 @@ class GraphUpdaterObsGen(pl.LightningModule):
             "steps_for_lr_warmup",
         )
 
-        # preprocessor
-        if word_vocab_path is not None:
-            self.preprocessor = SpacyPreprocessor.load_from_file(
-                to_absolute_path(word_vocab_path)
-            )
-        else:
-            # just load with special tokens
-            self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
+        # initialize word (preprocessor), node and relation stuff
+        (
+            node_name_word_ids,
+            node_name_mask,
+            rel_name_word_ids,
+            rel_name_mask,
+        ) = self.init_word_node_rel(
+            word_vocab_path=to_absolute_path(word_vocab_path)
+            if word_vocab_path is not None
+            else None,
+            node_vocab_path=to_absolute_path(node_vocab_path)
+            if node_vocab_path is not None
+            else None,
+            relation_vocab_path=to_absolute_path(relation_vocab_path)
+            if relation_vocab_path is not None
+            else None,
+        )
 
         # load pretrained word embedding and freeze it
-        self.num_words = len(self.preprocessor.word_to_id_dict)
         if pretrained_word_embedding_path is not None:
             pretrained_word_embedding = load_fasttext(
                 to_absolute_path(pretrained_word_embedding_path), self.preprocessor
@@ -244,34 +252,6 @@ class GraphUpdaterObsGen(pl.LightningModule):
         else:
             pretrained_word_embedding = nn.Embedding(self.num_words, word_emb_dim)
         pretrained_word_embedding.weight.requires_grad = False
-
-        # load node vocab
-        if node_vocab_path is not None:
-            with open(to_absolute_path(node_vocab_path), "r") as f:
-                self.node_vocab = [node_name.strip() for node_name in f]
-        else:
-            # initialize with a single node
-            self.node_vocab = ["node"]
-
-        # calculate mean masked node name embeddings
-        node_name_word_ids, node_name_mask = self.preprocessor.preprocess(
-            self.node_vocab
-        )
-        # load relation vocab
-        if relation_vocab_path is not None:
-            with open(to_absolute_path(relation_vocab_path), "r") as f:
-                self.relation_vocab = [relation_name.strip() for relation_name in f]
-        else:
-            # initialize with a single relation
-            self.relation_vocab = ["relation"]
-
-        # add reverse relations
-        self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
-
-        # calculate mean masked relation name embeddings
-        rel_name_word_ids, rel_name_mask = self.preprocessor.preprocess(
-            self.relation_vocab
-        )
 
         # graph updater
         self.graph_updater = GraphUpdater(
