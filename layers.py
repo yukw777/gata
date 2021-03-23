@@ -689,6 +689,7 @@ class WordNodeRelInitMixin(abc.ABC):
         else:
             # initialize with a single node
             self.node_vocab = ["node"]
+        self.num_nodes = len(self.node_vocab)
 
         # calculate mean masked node name embeddings
         node_name_word_ids, node_name_mask = self.preprocessor.preprocess(
@@ -705,6 +706,7 @@ class WordNodeRelInitMixin(abc.ABC):
 
         # add reverse relations
         self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
+        self.num_relations = len(self.relation_vocab)
 
         # calculate mean masked relation name embeddings
         rel_name_word_ids, rel_name_mask = self.preprocessor.preprocess(

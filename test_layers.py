@@ -442,6 +442,8 @@ def test_word_node_rel_init_mixin():
     ) = test_init_mixin.init_word_node_rel()
     assert test_init_mixin.preprocessor.word_vocab == [PAD, UNK, BOS, EOS]
     assert test_init_mixin.num_words == 4
+    assert test_init_mixin.num_nodes == 1
+    assert test_init_mixin.num_relations == 2
     assert node_name_word_ids.size() == (1, 1)
     assert node_name_mask.size() == (1, 1)
     assert rel_name_word_ids.size() == (2, 2)
@@ -460,6 +462,8 @@ def test_word_node_rel_init_mixin():
     )
     assert len(test_init_mixin.preprocessor.word_vocab) == 772
     assert test_init_mixin.num_words == 772
+    assert test_init_mixin.num_nodes == 99
+    assert test_init_mixin.num_relations == 20
     assert node_name_word_ids.size() == (99, 4)
     assert node_name_mask.size() == (99, 4)
     assert rel_name_word_ids.size() == (20, 3)
