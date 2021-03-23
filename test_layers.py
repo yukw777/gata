@@ -16,8 +16,10 @@ from layers import (
     ContextQueryAttention,
     ReprAggregator,
     EncoderMixin,
+    WordNodeRelInitMixin,
 )
 from utils import increasing_mask
+from preprocessor import PAD, UNK, BOS, EOS
 
 
 @pytest.mark.parametrize(
@@ -423,3 +425,42 @@ def test_encoder_mixin(
     assert te.encode_graph(
         torch.rand(batch_size, num_relations, num_node, num_node)
     ).size() == (batch_size, num_node, hidden_dim)
+
+
+def test_word_node_rel_init_mixin():
+    class TestWordNodeRelInitMixin(WordNodeRelInitMixin):
+        pass
+
+    test_init_mixin = TestWordNodeRelInitMixin()
+
+    # default values
+    (
+        node_name_word_ids,
+        node_name_mask,
+        rel_name_word_ids,
+        rel_name_mask,
+    ) = test_init_mixin.init_word_node_rel()
+    assert test_init_mixin.preprocessor.word_vocab == [PAD, UNK, BOS, EOS]
+    assert test_init_mixin.num_words == 4
+    assert node_name_word_ids.size() == (1, 1)
+    assert node_name_mask.size() == (1, 1)
+    assert rel_name_word_ids.size() == (2, 2)
+    assert rel_name_mask.size() == (2, 2)
+
+    # provide vocab files
+    (
+        node_name_word_ids,
+        node_name_mask,
+        rel_name_word_ids,
+        rel_name_mask,
+    ) = test_init_mixin.init_word_node_rel(
+        word_vocab_path="vocabs/word_vocab.txt",
+        node_vocab_path="vocabs/node_vocab.txt",
+        relation_vocab_path="vocabs/relation_vocab.txt",
+    )
+    assert len(test_init_mixin.preprocessor.word_vocab) == 772
+    assert test_init_mixin.num_words == 772
+    assert node_name_word_ids.size() == (99, 4)
+    assert node_name_mask.size() == (99, 4)
+    assert rel_name_word_ids.size() == (20, 3)
+    assert rel_name_mask.size() == (20, 3)

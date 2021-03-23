@@ -4,9 +4,10 @@ import itertools
 import math
 import abc
 
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from utils import masked_softmax, masked_mean
+from preprocessor import SpacyPreprocessor, BOS, EOS, PAD, UNK
 
 
 class RelationalGraphConvolution(nn.Module):
@@ -658,3 +659,56 @@ class EncoderMixin(abc.ABC):
         # (batch, num_relations, hidden_dim + relation_emb_dim)
         return self.graph_encoder(node_features, relation_features, adj)
         # (batch, num_node, hidden_dim)
+
+
+class WordNodeRelInitMixin(abc.ABC):
+    def init_word_node_rel(
+        self,
+        word_vocab_path: Optional[str] = None,
+        node_vocab_path: Optional[str] = None,
+        relation_vocab_path: Optional[str] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Initializes the preprocessor and num_words, and returns a tuple
+        (node_name_word_ids, node_name_mask, rel_name_word_ids, rel_name_mask)
+        """
+        # preprocessor
+        if word_vocab_path is not None:
+            self.preprocessor = SpacyPreprocessor.load_from_file(word_vocab_path)
+        else:
+            # just load with special tokens
+            self.preprocessor = SpacyPreprocessor([PAD, UNK, BOS, EOS])
+
+        # num_words
+        self.num_words = len(self.preprocessor.word_to_id_dict)
+
+        # load node vocab
+        if node_vocab_path is not None:
+            with open(node_vocab_path, "r") as f:
+                self.node_vocab = [node_name.strip() for node_name in f]
+        else:
+            # initialize with a single node
+            self.node_vocab = ["node"]
+
+        # calculate mean masked node name embeddings
+        node_name_word_ids, node_name_mask = self.preprocessor.preprocess(
+            self.node_vocab
+        )
+
+        # load relation vocab
+        if relation_vocab_path is not None:
+            with open(relation_vocab_path, "r") as f:
+                self.relation_vocab = [relation_name.strip() for relation_name in f]
+        else:
+            # initialize with a single relation
+            self.relation_vocab = ["relation"]
+
+        # add reverse relations
+        self.relation_vocab += [rel + " reverse" for rel in self.relation_vocab]
+
+        # calculate mean masked relation name embeddings
+        rel_name_word_ids, rel_name_mask = self.preprocessor.preprocess(
+            self.relation_vocab
+        )
+
+        return (node_name_word_ids, node_name_mask, rel_name_word_ids, rel_name_mask)
