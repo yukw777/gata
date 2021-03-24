@@ -136,3 +136,36 @@ def test_agent_preprocess_action_cands(
 )
 def test_agent_decode_actions(agent, action_cands, actions_idx, expected_decoded):
     assert agent.decode_actions(action_cands, actions_idx) == expected_decoded
+
+
+@pytest.mark.parametrize(
+    "batch_action_cands,expected_filtered",
+    [
+        (
+            [["action 1", "action 2", "action 3"]],
+            [["action 1", "action 2", "action 3"]],
+        ),
+        (
+            [
+                ["action 1", "action 2", "action 3"],
+                ["action 1", "action 2", "action 3"],
+            ],
+            [
+                ["action 1", "action 2", "action 3"],
+                ["action 1", "action 2", "action 3"],
+            ],
+        ),
+        (
+            [
+                ["examine cookbook", "examine table", "look potato"],
+                ["action 1", "examine table", "action 3"],
+            ],
+            [
+                ["examine cookbook"],
+                ["action 1", "action 3"],
+            ],
+        ),
+    ],
+)
+def test_filter_action_cands(agent, batch_action_cands, expected_filtered):
+    assert agent.filter_action_cands(batch_action_cands) == expected_filtered
