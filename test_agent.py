@@ -242,3 +242,57 @@ def test_agent_calculate_action_scores(
     assert action_scores.size() == (batch, num_action_cands)
     assert action_mask.size() == (batch, num_action_cands)
     assert filtered == expected_filtered
+
+
+@pytest.mark.parametrize(
+    "obs,action_cands,prev_actions,rnn_prev_hidden,filtered_action_cands",
+    [
+        (
+            ["observation for batch 0"],
+            [["action 1", "action 2", "action 3"]],
+            None,
+            None,
+            [{"action 1", "action 2", "action 3"}],
+        ),
+        (
+            ["observation for batch 0", "observation for batch 1"],
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook", "examine table", "look potato"],
+            ],
+            None,
+            None,
+            [
+                {"action 1", "action 2", "action 3"},
+                {"examine cookbook"},
+            ],
+        ),
+        (
+            ["observation for batch 0", "observation for batch 1"],
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook", "examine table", "look potato"],
+            ],
+            ["examine cookbook", "action 2"],
+            torch.rand(2, 8),
+            [
+                {"action 1", "action 2", "action 3"},
+                {"examine cookbook"},
+            ],
+        ),
+    ],
+)
+def test_agent_act(
+    agent,
+    obs,
+    action_cands,
+    prev_actions,
+    rnn_prev_hidden,
+    filtered_action_cands,
+):
+    chosen_actions = agent.act(
+        obs, action_cands, prev_actions=prev_actions, rnn_prev_hidden=rnn_prev_hidden
+    )
+    for action, cands in zip(chosen_actions, filtered_action_cands):
+        # make sure the chosen action is within the filtered action candidates
+        assert action in cands
