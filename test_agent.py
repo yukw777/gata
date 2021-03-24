@@ -7,6 +7,18 @@ from train_gata import GATADoubleDQN
 from preprocessor import SpacyPreprocessor, PAD, UNK
 
 
+@pytest.fixture
+def agent():
+    preprocessor = SpacyPreprocessor(
+        [PAD, UNK, "action", "1", "2", "3", "examine", "cookbook", "table"]
+    )
+    return Agent(
+        GraphUpdaterObsGen().graph_updater,
+        GATADoubleDQN().action_selector,
+        preprocessor,
+    )
+
+
 @pytest.mark.parametrize(
     "batch_action_cands,expected_filtered,"
     "expected_action_cand_word_ids,expected_action_cand_mask",
@@ -92,19 +104,12 @@ from preprocessor import SpacyPreprocessor, PAD, UNK
     ],
 )
 def test_agent_preprocess_action_cands(
+    agent,
     batch_action_cands,
     expected_filtered,
     expected_action_cand_word_ids,
     expected_action_cand_mask,
 ):
-    preprocessor = SpacyPreprocessor(
-        [PAD, UNK, "action", "1", "2", "3", "examine", "cookbook", "table"]
-    )
-    agent = Agent(
-        GraphUpdaterObsGen().graph_updater,
-        GATADoubleDQN().action_selector,
-        preprocessor,
-    )
     (
         filtered_batch_action_cands,
         action_cand_word_ids,
@@ -113,3 +118,21 @@ def test_agent_preprocess_action_cands(
     assert filtered_batch_action_cands == expected_filtered
     assert action_cand_word_ids.equal(expected_action_cand_word_ids)
     assert action_cand_mask.equal(expected_action_cand_mask)
+
+
+@pytest.mark.parametrize(
+    "action_cands,actions_idx,expected_decoded",
+    [
+        ([["action 1", "action 2", "action 3"]], [2], ["action 3"]),
+        (
+            [
+                ["action 1", "action 2", "action 3"],
+                ["action 1", "action 2"],
+            ],
+            [0, 1],
+            ["action 1", "action 2"],
+        ),
+    ],
+)
+def test_agent_decode_actions(agent, action_cands, actions_idx, expected_decoded):
+    assert agent.decode_actions(action_cands, actions_idx) == expected_decoded
