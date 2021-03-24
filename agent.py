@@ -253,8 +253,6 @@ class EpsilonGreedyAgent(Agent):
         # (batch)
 
         # randomly draw an action
-        # (batch, num_action_cands)
-        # randomly draw an action
         random_actions_idx = torch.multinomial(action_mask, 1).squeeze()
         # (batch)
 
