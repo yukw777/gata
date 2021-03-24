@@ -31,18 +31,18 @@ class Agent:
         action_cands: List[List[str]],
         prev_actions: Optional[List[str]] = None,
         rnn_prev_hidden: Optional[torch.Tensor] = None,
-    ) -> Tuple[List[List[str]], torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, List[List[str]]]:
         """
         Take a batch of raw observations, action candidates, previous actions
-        and previous rnn hidden states and return a matching batch of action indices
-        that maximizes the q value.
+        and previous rnn hidden states (batch, hidden_dim) and return a matching
+        batch of action indices that maximizes the q value.
 
         If prev_actions is None, use ['restart', ...]
 
         output: (
-            filtered list of action candidates,
             action scores of shape (batch, num_action_cands)
             action mask of shape (batch, num_action_cands)
+            filtered list of action candidates,
         )
         """
         # preprocess observations
@@ -82,7 +82,7 @@ class Agent:
             action_cand_mask,
         )
 
-        return filtered_batch_action_cands, action_scores, action_mask
+        return action_scores, action_mask, filtered_batch_action_cands
 
     @torch.no_grad()
     def act(
@@ -100,9 +100,9 @@ class Agent:
         If prev_actions is None, use ['restart', ...]
         """
         (
-            filtered_batch_action_cands,
             action_scores,
             action_mask,
+            filtered_batch_action_cands,
         ) = self.calculate_action_scores(
             obs,
             action_cands,
@@ -238,9 +238,9 @@ class EpsilonGreedyAgent(Agent):
         """
         # get the actions with max q (action score)
         (
-            filtered_batch_action_cands,
             action_scores,
             action_mask,
+            filtered_batch_action_cands,
         ) = self.calculate_action_scores(
             obs,
             action_cands,

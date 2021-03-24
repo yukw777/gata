@@ -9,6 +9,16 @@ from preprocessor import SpacyPreprocessor, PAD, UNK
 
 @pytest.fixture
 def agent():
+    graph_updater_obs_gen = GraphUpdaterObsGen(word_vocab_path="vocabs/word_vocab.txt")
+    return Agent(
+        graph_updater_obs_gen.graph_updater,
+        GATADoubleDQN(word_vocab_path="vocabs/word_vocab.txt").action_selector,
+        graph_updater_obs_gen.preprocessor,
+    )
+
+
+@pytest.fixture
+def agent_simple_words():
     preprocessor = SpacyPreprocessor(
         [PAD, UNK, "action", "1", "2", "3", "examine", "cookbook", "table"]
     )
@@ -104,7 +114,7 @@ def agent():
     ],
 )
 def test_agent_preprocess_action_cands(
-    agent,
+    agent_simple_words,
     batch_action_cands,
     expected_filtered,
     expected_action_cand_word_ids,
@@ -114,7 +124,7 @@ def test_agent_preprocess_action_cands(
         filtered_batch_action_cands,
         action_cand_word_ids,
         action_cand_mask,
-    ) = agent.preprocess_action_cands(batch_action_cands)
+    ) = agent_simple_words.preprocess_action_cands(batch_action_cands)
     assert filtered_batch_action_cands == expected_filtered
     assert action_cand_word_ids.equal(expected_action_cand_word_ids)
     assert action_cand_mask.equal(expected_action_cand_mask)
@@ -169,3 +179,66 @@ def test_agent_decode_actions(agent, action_cands, actions_idx, expected_decoded
 )
 def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered):
     assert agent.filter_action_cands(batch_action_cands) == expected_filtered
+
+
+@pytest.mark.parametrize(
+    "obs,action_cands,prev_actions,rnn_prev_hidden,batch,"
+    "num_action_cands,expected_filtered",
+    [
+        (
+            ["observation for batch 0"],
+            [["action 1", "action 2", "action 3"]],
+            None,
+            None,
+            1,
+            3,
+            [["action 1", "action 2", "action 3"]],
+        ),
+        (
+            ["observation for batch 0", "observation for batch 1"],
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook", "examine table", "look potato"],
+            ],
+            None,
+            None,
+            2,
+            3,
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook"],
+            ],
+        ),
+        (
+            ["observation for batch 0", "observation for batch 1"],
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook", "examine table", "look potato"],
+            ],
+            ["examine cookbook", "action 2"],
+            torch.rand(2, 8),
+            2,
+            3,
+            [
+                ["action 1", "action 2", "action 3"],
+                ["examine cookbook"],
+            ],
+        ),
+    ],
+)
+def test_agent_calculate_action_scores(
+    agent,
+    obs,
+    action_cands,
+    prev_actions,
+    rnn_prev_hidden,
+    batch,
+    num_action_cands,
+    expected_filtered,
+):
+    action_scores, action_mask, filtered = agent.calculate_action_scores(
+        obs, action_cands, prev_actions=prev_actions, rnn_prev_hidden=rnn_prev_hidden
+    )
+    assert action_scores.size() == (batch, num_action_cands)
+    assert action_mask.size() == (batch, num_action_cands)
+    assert filtered == expected_filtered
