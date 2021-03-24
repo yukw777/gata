@@ -380,3 +380,35 @@ def test_eps_greedy_agent_act(
     for action, cands in zip(chosen_actions, filtered_action_cands):
         # make sure the chosen action is within the filtered action candidates
         assert action in cands
+
+
+@pytest.mark.parametrize(
+    "epsilon_anneal_from,epsilon_anneal_to,epsilon_anneal_episodes",
+    [(0.1, 1.0, 20), (0.0, 1.0, 20), (1.0, 1.0, 20), (0.1, 1.0, 20000)],
+)
+def test_update_epsilon(
+    eps_greedy_agent,
+    epsilon_anneal_from,
+    epsilon_anneal_to,
+    epsilon_anneal_episodes,
+):
+    eps_greedy_agent.epsilon_anneal_from = epsilon_anneal_from
+    eps_greedy_agent.epsilon_anneal_to = epsilon_anneal_to
+    eps_greedy_agent.epsilon_anneal_episodes = epsilon_anneal_episodes
+
+    # if step is 0, epsilon should equal epsilon_anneal_from
+    eps_greedy_agent.update_epsilon(0)
+    assert eps_greedy_agent.epsilon == epsilon_anneal_from
+
+    # if step is bigger than epsilon_anneal_episodes,
+    # epsilon should equal epsilon_anneal_to
+    eps_greedy_agent.update_epsilon(epsilon_anneal_episodes)
+    assert pytest.approx(eps_greedy_agent.epsilon) == epsilon_anneal_to
+    eps_greedy_agent.update_epsilon(epsilon_anneal_episodes + 10)
+    assert eps_greedy_agent.epsilon == epsilon_anneal_to
+
+    # if step is in the middle, epsilon should be the mean of from and to
+    eps_greedy_agent.update_epsilon(epsilon_anneal_episodes // 2)
+    assert eps_greedy_agent.epsilon == pytest.approx(
+        (epsilon_anneal_from + epsilon_anneal_to) / 2
+    )

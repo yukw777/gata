@@ -282,3 +282,14 @@ class EpsilonGreedyAgent(Agent):
         return (
             choose_random * random_actions_idx + (1 - choose_random) * max_q_actions_idx
         ).long()
+
+    def update_epsilon(self, step: int) -> None:
+        """
+        Update the epsilon value linearly based on the current step
+        """
+        slope = (
+            self.epsilon_anneal_to - self.epsilon_anneal_from
+        ) / self.epsilon_anneal_episodes
+        self.epsilon = min(
+            self.epsilon_anneal_to, step * slope + self.epsilon_anneal_from
+        )
