@@ -34,7 +34,9 @@ class SpacyPreprocessor:
     def tokenize(self, s: str) -> List[str]:
         return [t.text.lower() for t in self.tokenizer(s)]
 
-    def pad(self, unpadded_batch: List[List[int]]) -> Tuple[torch.Tensor, torch.Tensor]:
+    def pad(
+        self, unpadded_batch: List[List[int]], device: Optional[torch.device] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         # return padded tensor and corresponding mask
         max_len = max(len(word_ids) for word_ids in unpadded_batch)
         return (
@@ -42,26 +44,33 @@ class SpacyPreprocessor:
                 [
                     word_ids + [0] * (max_len - len(word_ids))
                     for word_ids in unpadded_batch
-                ]
+                ],
+                device=device,
             ),
             torch.tensor(
                 [
                     [1] * len(word_ids) + [0] * (max_len - len(word_ids))
                     for word_ids in unpadded_batch
-                ]
-            ).float(),
+                ],
+                device=device,
+                dtype=torch.float,
+            ),
         )
 
     def preprocess_tokenized(
-        self, tokenized_batch: List[List[str]]
+        self, tokenized_batch: List[List[str]], device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.pad([self.words_to_ids(tokenized) for tokenized in tokenized_batch])
 
-    def preprocess(self, batch: List[str]) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.preprocess_tokenized([self.tokenize(s) for s in batch])
+    def preprocess(
+        self, batch: List[str], device: Optional[torch.device] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        return self.preprocess_tokenized(
+            [self.tokenize(s) for s in batch], device=device
+        )
 
     def clean_and_preprocess(
-        self, batch: List[str]
+        self, batch: List[str], device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(self.clean(s)) for s in batch])
 
