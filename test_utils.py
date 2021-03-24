@@ -152,4 +152,4 @@ def test_load_textworld_games():
     assert env.batch_size == batch_size
     # for some reason env.spec.max_episode_steps is None
     # assert env.spec.max_episode_steps == max_episode_steps
-    assert env.spec.id == f"tw-{name}-v0"
+    assert env.spec.id.split("-")[1] == name

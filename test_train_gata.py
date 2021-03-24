@@ -57,19 +57,19 @@ def test_gata_double_dqn_default_init():
     assert len(gata_ddqn.train_env.gamefiles) == 2
     assert gata_ddqn.train_env.request_infos == request_infos_for_train()
     assert gata_ddqn.train_env.batch_size == gata_ddqn.hparams.game_batch_size
-    assert gata_ddqn.train_env.spec.id == "tw-train-v0"
+    assert gata_ddqn.train_env.spec.id.split("-")[1] == "train"
 
     # val_env is initialized with the test games
     assert len(gata_ddqn.val_env.gamefiles) == 2
     assert gata_ddqn.val_env.request_infos == request_infos_for_eval()
     assert gata_ddqn.val_env.batch_size == gata_ddqn.hparams.game_batch_size
-    assert gata_ddqn.val_env.spec.id == "tw-val-v0"
+    assert gata_ddqn.val_env.spec.id.split("-")[1] == "val"
 
     # test_env is initialized with the test games
     assert len(gata_ddqn.test_env.gamefiles) == 2
     assert gata_ddqn.test_env.request_infos == request_infos_for_eval()
     assert gata_ddqn.test_env.batch_size == gata_ddqn.hparams.game_batch_size
-    assert gata_ddqn.test_env.spec.id == "tw-test-v0"
+    assert gata_ddqn.test_env.spec.id.split("-")[1] == "test"
 
     # default words
     default_word_vocab = [PAD, UNK, BOS, EOS]
