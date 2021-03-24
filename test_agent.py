@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from agent import Agent
+from agent import Agent, EpsilonGreedyAgent
 from train_graph_updater import GraphUpdaterObsGen
 from train_gata import GATADoubleDQN
 from preprocessor import SpacyPreprocessor, PAD, UNK
@@ -26,6 +26,19 @@ def agent_simple_words():
         GraphUpdaterObsGen().graph_updater,
         GATADoubleDQN().action_selector,
         preprocessor,
+    )
+
+
+@pytest.fixture
+def eps_greedy_agent():
+    graph_updater_obs_gen = GraphUpdaterObsGen(word_vocab_path="vocabs/word_vocab.txt")
+    return EpsilonGreedyAgent(
+        graph_updater_obs_gen.graph_updater,
+        GATADoubleDQN(word_vocab_path="vocabs/word_vocab.txt").action_selector,
+        graph_updater_obs_gen.preprocessor,
+        1.0,
+        0.1,
+        20,
     )
 
 
@@ -296,3 +309,20 @@ def test_agent_act(
     for action, cands in zip(chosen_actions, filtered_action_cands):
         # make sure the chosen action is within the filtered action candidates
         assert action in cands
+
+
+def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
+    max_q_actions_idx = torch.randint(5, (3,))
+    random_actions_idx = torch.randint(5, (3,))
+
+    # if epsilon = 0, this degrades to max q greedy
+    eps_greedy_agent.epsilon = 0.0
+    assert eps_greedy_agent.select_epsilon_greedy(
+        max_q_actions_idx, random_actions_idx
+    ).equal(max_q_actions_idx)
+
+    # if epsilon = 1, this degrades to random
+    eps_greedy_agent.epsilon = 1.0
+    assert eps_greedy_agent.select_epsilon_greedy(
+        max_q_actions_idx, random_actions_idx
+    ).equal(random_actions_idx)

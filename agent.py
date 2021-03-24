@@ -256,20 +256,29 @@ class EpsilonGreedyAgent(Agent):
         random_actions_idx = torch.multinomial(action_mask, 1).squeeze()
         # (batch)
 
+        # select actions based on the epsilon greedy strategy
+        actions_idx = self.select_epsilon_greedy(max_q_actions_idx, random_actions_idx)
+        # (batch)
+
+        # decode the action strings
+        return self.decode_actions(filtered_batch_action_cands, actions_idx.tolist())
+
+    @torch.no_grad()
+    def select_epsilon_greedy(
+        self, max_q_actions_idx: torch.Tensor, random_actions_idx: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        max_q_actions_idx: (batch)
+        random_actions_idx: (batch)
+
+        output: selected actions based on the epsilon greedy strategy (batch)
+        """
         # epsilon greedy: epsilon is the probability for using random actions
         batch_size = max_q_actions_idx.size(0)
         choose_random = torch.bernoulli(
             torch.tensor([self.epsilon] * batch_size, device=self.device)
         )
         # (batch)
-        actions_idx = (
-            (
-                choose_random * random_actions_idx
-                + (1 - choose_random) * max_q_actions_idx
-            )
-            .long()
-            .tolist()
-        )
-
-        # decode the action strings
-        return self.decode_actions(filtered_batch_action_cands, actions_idx.tolist())
+        return (
+            choose_random * random_actions_idx + (1 - choose_random) * max_q_actions_idx
+        ).long()
