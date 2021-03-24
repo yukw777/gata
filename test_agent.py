@@ -167,5 +167,5 @@ def test_agent_decode_actions(agent, action_cands, actions_idx, expected_decoded
         ),
     ],
 )
-def test_filter_action_cands(agent, batch_action_cands, expected_filtered):
+def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered):
     assert agent.filter_action_cands(batch_action_cands) == expected_filtered
