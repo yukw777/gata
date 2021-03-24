@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from typing import Tuple
 from layers import TextEncoder, GraphEncoder, ReprAggregator, EncoderMixin
 from utils import masked_mean
 
@@ -27,7 +28,7 @@ class ActionScorer(nn.Module):
         h_og: torch.Tensor,
         h_go: torch.Tensor,
         obs_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         enc_action_cands: encoded action candidates produced by TextEncoder.
             (batch, num_action_cands, action_cand_len, hidden_dim)
@@ -39,7 +40,9 @@ class ActionScorer(nn.Module):
             (batch, num_node, hidden_dim)
         obs_mask: mask for the observations. (batch, obs_len)
 
-        output: action scores of shape (batch, num_action_cands)
+        output:
+            action scores of shape (batch, num_action_cands)
+            action mask of shape (batch, num_action_cands)
         """
         # get the action candidate representation
         # perform masked mean pooling over the action_cand_len dim
@@ -104,7 +107,7 @@ class ActionScorer(nn.Module):
         output *= action_mask
         # (batch, num_action_cands)
 
-        return output
+        return output, action_mask
 
 
 class ActionSelector(EncoderMixin, nn.Module):
@@ -193,7 +196,7 @@ class ActionSelector(EncoderMixin, nn.Module):
         current_graph: torch.Tensor,
         action_cand_word_ids: torch.Tensor,
         action_cand_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
         obs_word_ids: (batch, obs_len)
         obs_mask: (batch, obs_len)
@@ -201,7 +204,9 @@ class ActionSelector(EncoderMixin, nn.Module):
         action_cand_word_ids: (batch, num_action_cands, action_cand_len)
         action_cand_mask: (batch, num_action_cands, action_cand_len)
 
-        output: action scores of shape (batch, num_action_cands)
+        output:
+            action scores of shape (batch, num_action_cands)
+            action mask of shape (batch, num_action_cands)
         """
         # encode text observations
         encoded_obs = self.encode_text(obs_word_ids, obs_mask)
@@ -233,4 +238,24 @@ class ActionSelector(EncoderMixin, nn.Module):
         return self.action_scorer(
             enc_action_cands, action_cand_mask, h_og, h_go, obs_mask
         )
-        # (batch, num_action_cands)
+
+    def select_max_q(
+        self, action_scores: torch.Tensor, action_mask: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        action_scores of shape (batch, num_action_cands)
+        action_mask of shape (batch, num_action_cands)
+
+        output: indices of max q actions of shape (batch)
+        """
+        # we want to select only from the unmasked actions
+        # if we naively take the argmax, masked actions would
+        # be picked over actions with negative scores if there are no
+        # actions with positive scores. So we first subtract the minimum score
+        # from all actions and add a small epsilon so that actions with negative
+        # scores would have small positive scores and they would get chosen
+        # over masked actions
+        shifted_action_scores = (
+            action_scores - action_scores.min(dim=1, keepdim=True)[0] + 1e-5
+        ) * action_mask
+        return shifted_action_scores.argmax(dim=1)
