@@ -207,3 +207,61 @@ def test_gata_double_dqn_get_q_values(
     assert GATADoubleDQN.get_q_values(action_scores, action_mask, actions_idx).equal(
         expected
     )
+
+
+@pytest.mark.parametrize(
+    "batch_size,obs_len,num_action_cands,action_cand_len",
+    [
+        (1, 8, 5, 3),
+        (3, 12, 8, 4),
+    ],
+)
+def test_gata_double_dqn_training_step(
+    batch_size, obs_len, num_action_cands, action_cand_len
+):
+    gata_ddqn = GATADoubleDQN()
+    # Note: batch_idx is not used
+    assert (
+        gata_ddqn.training_step(
+            {
+                "obs_word_ids": torch.randint(4, (batch_size, obs_len)),
+                "obs_mask": torch.randint(2, (batch_size, obs_len), dtype=torch.float),
+                "current_graph": torch.rand(
+                    batch_size,
+                    gata_ddqn.num_relations,
+                    gata_ddqn.num_nodes,
+                    gata_ddqn.num_nodes,
+                ),
+                "action_cand_word_ids": torch.randint(
+                    4, (batch_size, num_action_cands, action_cand_len)
+                ),
+                "action_cand_mask": torch.randint(
+                    2,
+                    (batch_size, num_action_cands, action_cand_len),
+                    dtype=torch.float,
+                ),
+                "actions_idx": torch.randint(num_action_cands, (batch_size,)),
+                "rewards": torch.rand(batch_size),
+                "next_obs_word_ids": torch.randint(4, (batch_size, obs_len)),
+                "next_obs_mask": torch.randint(
+                    2, (batch_size, obs_len), dtype=torch.float
+                ),
+                "next_graph": torch.rand(
+                    batch_size,
+                    gata_ddqn.num_relations,
+                    gata_ddqn.num_nodes,
+                    gata_ddqn.num_nodes,
+                ),
+                "next_action_cand_word_ids": torch.randint(
+                    4, (batch_size, num_action_cands, action_cand_len)
+                ),
+                "next_action_cand_mask": torch.randint(
+                    2,
+                    (batch_size, num_action_cands, action_cand_len),
+                    dtype=torch.float,
+                ),
+            },
+            0,
+        ).ndimension()
+        == 0
+    )

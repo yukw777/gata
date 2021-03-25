@@ -4,7 +4,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import gym
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 from textworld import EnvInfos
 
 from utils import load_textworld_games
@@ -70,6 +70,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         epsilon_anneal_from: float = 1.0,
         epsilon_anneal_to: float = 0.1,
         epsilon_anneal_episodes: int = 20000,
+        game_reward_discount: float = 0.9,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
@@ -99,6 +100,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "epsilon_anneal_from",
             "epsilon_anneal_to",
             "epsilon_anneal_episodes",
+            "game_reward_discount",
         )
 
         # load envs
@@ -226,6 +228,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         for param in self.graph_updater.parameters():
             param.requires_grad = False
 
+        # loss
+        self.smooth_l1_loss = nn.SmoothL1Loss()
+
     def update_target_action_selector(self) -> None:
         self.target_action_selector.load_state_dict(self.action_selector.state_dict())
 
@@ -277,4 +282,52 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         return torch.squeeze(
             action_scores.gather(1, actions_idx) * action_mask.gather(1, actions_idx),
             dim=1,
+        )
+
+    def training_step(  # type: ignore
+        self, batch: Dict[str, torch.Tensor], batch_idx: int
+    ) -> torch.Tensor:
+        # double deep q learning
+
+        # calculate the current q values
+        action_scores, action_mask = self(
+            batch["obs_word_ids"],
+            batch["obs_mask"],
+            batch["current_graph"],
+            batch["action_cand_word_ids"],
+            batch["action_cand_mask"],
+        )
+        q_values = self.get_q_values(action_scores, action_mask, batch["actions_idx"])
+
+        with torch.no_grad():
+            # select the next actions with the best q values
+            next_action_scores, next_action_mask = self(
+                batch["next_obs_word_ids"],
+                batch["next_obs_mask"],
+                batch["next_graph"],
+                batch["next_action_cand_word_ids"],
+                batch["next_action_cand_mask"],
+            )
+            next_actions_idx = self.action_selector.select_max_q(
+                next_action_scores, next_action_mask
+            )
+
+            # calculate the next q values using the target action selector
+            next_tgt_action_scores, next_tgt_action_mask = self.target_action_selector(
+                batch["next_obs_word_ids"],
+                batch["next_obs_mask"],
+                batch["next_graph"],
+                batch["next_action_cand_word_ids"],
+                batch["next_action_cand_mask"],
+            )
+            next_q_values = self.get_q_values(
+                next_tgt_action_scores, next_tgt_action_mask, next_actions_idx
+            )
+        # TODO: loss calculation and updates for prioritized experience replay
+        # Note: no need to mask the next Q values as "done" states are not even added
+        # to the replay buffer
+        return self.smooth_l1_loss(
+            q_values,
+            batch["rewards"]
+            + next_q_values * self.hparams.game_reward_discount,  # type: ignore
         )
