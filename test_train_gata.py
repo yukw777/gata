@@ -1,4 +1,5 @@
 import pytest
+import torch
 import torch.nn as nn
 
 from train_gata import (
@@ -8,6 +9,7 @@ from train_gata import (
     GATADoubleDQN,
 )
 from preprocessor import PAD, UNK, BOS, EOS
+from utils import increasing_mask
 
 
 def test_request_infos_for_train():
@@ -137,3 +139,34 @@ def test_gata_double_dqn_update_target_action_selector():
         gata_ddqn.target_action_selector.parameters(),
     ):
         assert main.equal(target)
+
+
+@pytest.mark.parametrize(
+    "batch_size,obs_len,num_action_cands,action_cand_len",
+    [(1, 5, 4, 10), (3, 6, 5, 12)],
+)
+def test_gata_double_dqn_forward(
+    batch_size,
+    obs_len,
+    num_action_cands,
+    action_cand_len,
+):
+    gata_ddqn = GATADoubleDQN()
+    action_scores, action_mask = gata_ddqn(
+        torch.randint(gata_ddqn.num_words, (batch_size, obs_len)),
+        increasing_mask(batch_size, obs_len),
+        torch.rand(
+            batch_size,
+            gata_ddqn.num_relations,
+            gata_ddqn.num_nodes,
+            gata_ddqn.num_nodes,
+        ),
+        torch.randint(
+            gata_ddqn.num_words, (batch_size, num_action_cands, action_cand_len)
+        ),
+        increasing_mask(batch_size * num_action_cands, action_cand_len).view(
+            batch_size, num_action_cands, action_cand_len
+        ),
+    )
+    assert action_scores.size() == (batch_size, num_action_cands)
+    assert action_mask.size() == (batch_size, num_action_cands)

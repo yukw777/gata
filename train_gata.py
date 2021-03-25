@@ -1,9 +1,10 @@
 import os
+import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import gym
 
-from typing import Optional
+from typing import Optional, Tuple
 from textworld import EnvInfos
 
 from utils import load_textworld_games
@@ -68,7 +69,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         action_scorer_num_heads: int = 1,
         epsilon_anneal_from: float = 1.0,
         epsilon_anneal_to: float = 0.1,
-        epsilon_anneal_episodes: float = 20000,
+        epsilon_anneal_episodes: int = 20000,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
@@ -227,3 +228,32 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def update_target_action_selector(self) -> None:
         self.target_action_selector.load_state_dict(self.action_selector.state_dict())
+
+    def forward(  # type: ignore
+        self,
+        obs_word_ids: torch.Tensor,
+        obs_mask: torch.Tensor,
+        current_graph: torch.Tensor,
+        action_cand_word_ids: torch.Tensor,
+        action_cand_mask: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Use the main action selector to get the action scores based on the game state.
+
+        obs_word_ids: (batch, obs_len)
+        obs_mask: (batch, obs_len)
+        current_graph: (batch, num_relation, num_node, num_node)
+        action_cand_word_ids: (batch, num_action_cands, action_cand_len)
+        action_cand_mask: (batch, num_action_cands, action_cand_len)
+
+        output:
+            action scores of shape (batch, num_action_cands)
+            action mask of shape (batch, num_action_cands)
+        """
+        return self.action_selector(
+            obs_word_ids,
+            obs_mask,
+            current_graph,
+            action_cand_word_ids,
+            action_cand_mask,
+        )
