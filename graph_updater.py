@@ -30,6 +30,7 @@ class GraphUpdater(EncoderMixin, nn.Module):
     ) -> None:
         super().__init__()
         # constants
+        self.hidden_dim = hidden_dim
         # b/c we add inverse relations, num_relations has to be even
         assert num_relations % 2 == 0
         self.num_nodes = num_nodes

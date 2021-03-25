@@ -202,7 +202,7 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
             ["observation for batch 0"],
             [["action 1", "action 2", "action 3"]],
             None,
-            None,
+            False,
             1,
             3,
             [["action 1", "action 2", "action 3"]],
@@ -214,7 +214,7 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
                 ["examine cookbook", "examine table", "look potato"],
             ],
             None,
-            None,
+            False,
             2,
             3,
             [
@@ -229,7 +229,7 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
                 ["examine cookbook", "examine table", "look potato"],
             ],
             ["examine cookbook", "action 2"],
-            torch.rand(2, 8),
+            True,
             2,
             3,
             [
@@ -249,11 +249,22 @@ def test_agent_calculate_action_scores(
     num_action_cands,
     expected_filtered,
 ):
-    action_scores, action_mask, filtered = agent.calculate_action_scores(
-        obs, action_cands, prev_actions=prev_actions, rnn_prev_hidden=rnn_prev_hidden
+    (
+        action_scores,
+        action_mask,
+        rnn_curr_hidden,
+        filtered,
+    ) = agent.calculate_action_scores(
+        obs,
+        action_cands,
+        prev_actions=prev_actions,
+        rnn_prev_hidden=torch.rand(len(obs), agent.graph_updater.hidden_dim)
+        if rnn_prev_hidden
+        else None,
     )
     assert action_scores.size() == (batch, num_action_cands)
     assert action_mask.size() == (batch, num_action_cands)
+    assert rnn_curr_hidden.size() == (batch, agent.graph_updater.hidden_dim)
     assert filtered == expected_filtered
 
 
@@ -264,7 +275,7 @@ def test_agent_calculate_action_scores(
             ["observation for batch 0"],
             [["action 1", "action 2", "action 3"]],
             None,
-            None,
+            False,
             [{"action 1", "action 2", "action 3"}],
         ),
         (
@@ -274,7 +285,7 @@ def test_agent_calculate_action_scores(
                 ["examine cookbook", "examine table", "look potato"],
             ],
             None,
-            None,
+            False,
             [
                 {"action 1", "action 2", "action 3"},
                 {"examine cookbook"},
@@ -287,7 +298,7 @@ def test_agent_calculate_action_scores(
                 ["examine cookbook", "examine table", "look potato"],
             ],
             ["examine cookbook", "action 2"],
-            torch.rand(2, 8),
+            True,
             [
                 {"action 1", "action 2", "action 3"},
                 {"examine cookbook"},
@@ -303,12 +314,18 @@ def test_agent_act(
     rnn_prev_hidden,
     filtered_action_cands,
 ):
-    chosen_actions = agent.act(
-        obs, action_cands, prev_actions=prev_actions, rnn_prev_hidden=rnn_prev_hidden
+    chosen_actions, rnn_curr_hidden = agent.act(
+        obs,
+        action_cands,
+        prev_actions=prev_actions,
+        rnn_prev_hidden=torch.rand(len(obs), agent.graph_updater.hidden_dim)
+        if rnn_prev_hidden
+        else None,
     )
     for action, cands in zip(chosen_actions, filtered_action_cands):
         # make sure the chosen action is within the filtered action candidates
         assert action in cands
+    assert rnn_curr_hidden.size() == (len(obs), agent.graph_updater.hidden_dim)
 
 
 def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
@@ -335,7 +352,7 @@ def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
             ["observation for batch 0"],
             [["action 1", "action 2", "action 3"]],
             None,
-            None,
+            False,
             [{"action 1", "action 2", "action 3"}],
         ),
         (
@@ -345,7 +362,7 @@ def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
                 ["examine cookbook", "examine table", "look potato"],
             ],
             None,
-            None,
+            False,
             [
                 {"action 1", "action 2", "action 3"},
                 {"examine cookbook"},
@@ -358,7 +375,7 @@ def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
                 ["examine cookbook", "examine table", "look potato"],
             ],
             ["examine cookbook", "action 2"],
-            torch.rand(2, 8),
+            True,
             [
                 {"action 1", "action 2", "action 3"},
                 {"examine cookbook"},
@@ -374,12 +391,21 @@ def test_eps_greedy_agent_act(
     rnn_prev_hidden,
     filtered_action_cands,
 ):
-    chosen_actions = eps_greedy_agent.act(
-        obs, action_cands, prev_actions=prev_actions, rnn_prev_hidden=rnn_prev_hidden
+    chosen_actions, rnn_curr_hidden = eps_greedy_agent.act(
+        obs,
+        action_cands,
+        prev_actions=prev_actions,
+        rnn_prev_hidden=torch.rand(len(obs), eps_greedy_agent.graph_updater.hidden_dim)
+        if rnn_prev_hidden
+        else None,
     )
     for action, cands in zip(chosen_actions, filtered_action_cands):
         # make sure the chosen action is within the filtered action candidates
         assert action in cands
+    assert rnn_curr_hidden.size() == (
+        len(obs),
+        eps_greedy_agent.graph_updater.hidden_dim,
+    )
 
 
 @pytest.mark.parametrize(
