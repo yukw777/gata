@@ -170,3 +170,40 @@ def test_gata_double_dqn_forward(
     )
     assert action_scores.size() == (batch_size, num_action_cands)
     assert action_mask.size() == (batch_size, num_action_cands)
+
+
+@pytest.mark.parametrize(
+    "action_scores,action_mask,actions_idx,expected",
+    [
+        (
+            torch.tensor([[1.0]]),
+            torch.tensor([[1.0]]),
+            torch.tensor([0]),
+            torch.tensor([1.0]),
+        ),
+        (
+            torch.tensor([[1.0, 2.0]]),
+            torch.tensor([[1.0, 1.0]]),
+            torch.tensor([1]),
+            torch.tensor([2.0]),
+        ),
+        (
+            torch.tensor([[1.0, 2.0]]),
+            torch.tensor([[1.0, 0.0]]),
+            torch.tensor([1]),
+            torch.tensor([0.0]),
+        ),
+        (
+            torch.tensor([[1.0, 2.0], [2.0, 1.0]]),
+            torch.tensor([[1.0, 0.0], [1.0, 1.0]]),
+            torch.tensor([1, 0]),
+            torch.tensor([0.0, 2.0]),
+        ),
+    ],
+)
+def test_gata_double_dqn_get_q_values(
+    action_scores, action_mask, actions_idx, expected
+):
+    assert GATADoubleDQN.get_q_values(action_scores, action_mask, actions_idx).equal(
+        expected
+    )

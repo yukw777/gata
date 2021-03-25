@@ -257,3 +257,24 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             action_cand_word_ids,
             action_cand_mask,
         )
+
+    @staticmethod
+    def get_q_values(
+        action_scores: torch.Tensor,
+        action_mask: torch.Tensor,
+        actions_idx: torch.Tensor,
+    ) -> torch.Tensor:
+        """
+        Get the state action values of the given actions.
+
+        action_scores: (batch, num_action_cands)
+        action_mask: (batch, num_action_cands)
+        actions_idx: (batch)
+
+        output: state action values (batch)
+        """
+        actions_idx = actions_idx.unsqueeze(1)
+        return torch.squeeze(
+            action_scores.gather(1, actions_idx) * action_mask.gather(1, actions_idx),
+            dim=1,
+        )
