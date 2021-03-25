@@ -239,8 +239,9 @@ class ActionSelector(EncoderMixin, nn.Module):
             enc_action_cands, action_cand_mask, h_og, h_go, obs_mask
         )
 
+    @staticmethod
     def select_max_q(
-        self, action_scores: torch.Tensor, action_mask: torch.Tensor
+        action_scores: torch.Tensor, action_mask: torch.Tensor
     ) -> torch.Tensor:
         """
         action_scores of shape (batch, num_action_cands)
