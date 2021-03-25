@@ -114,14 +114,14 @@ class Agent:
         # decode the action strings
         return self.decode_actions(filtered_batch_action_cands, actions_idx.tolist())
 
+    @staticmethod
     def decode_actions(
-        self, action_cands: List[List[str]], actions_idx: List[int]
+        action_cands: List[List[str]], actions_idx: List[int]
     ) -> List[str]:
         return [cands[i] for cands, i in zip(action_cands, actions_idx)]
 
-    def filter_action_cands(
-        self, batch_action_cands: List[List[str]]
-    ) -> List[List[str]]:
+    @staticmethod
+    def filter_action_cands(batch_action_cands: List[List[str]]) -> List[List[str]]:
         """
         batch_action_cands: a batch of "admissible commands" from the game
 
