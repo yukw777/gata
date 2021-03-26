@@ -54,7 +54,7 @@ class Agent:
         # preprocess previous actions
         if prev_actions is None:
             prev_actions = ["restart"] * len(obs)
-        prev_action_word_ids, prev_action_mask = self.preprocessor.clean_and_preprocess(
+        prev_action_word_ids, prev_action_mask = self.preprocessor.preprocess(
             prev_actions, device=self.device
         )
 
@@ -166,11 +166,11 @@ class Agent:
         # filter look and examine actions (except for examine cookbook)
         batch_filtered_action_cands = self.filter_action_cands(batch_action_cands)
 
-        # clean and preprocess by flattening out action candidates
+        # preprocess by flattening out action candidates
         (
             flat_action_cand_word_ids,
             flat_action_cand_mask,
-        ) = self.preprocessor.clean_and_preprocess(
+        ) = self.preprocessor.preprocess(
             list(chain.from_iterable(batch_filtered_action_cands)), device=self.device
         )
 
