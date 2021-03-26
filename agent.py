@@ -264,6 +264,9 @@ class EpsilonGreedyAgent(Agent):
         # (batch)
 
         # randomly draw an action
+        # we use the action_mask here b/c we want all the unmasked actions
+        # to have the same probability to be selected, and the masked actions
+        # zero probabilities.
         random_actions_idx = torch.multinomial(action_mask, 1).squeeze()
         # (batch)
 
