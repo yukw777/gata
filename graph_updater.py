@@ -167,7 +167,7 @@ class GraphUpdater(EncoderMixin, nn.Module):
         output:
         {
             'h_t': hidden state of the rnn cell at time t; (batch, hidden_dim)
-            'g_t': encoded graph at time t; (batch, num_relation, num_node, num_node)
+            'g_t': decoded graph at time t; (batch, num_relation, num_node, num_node)
             'h_ag': aggregated representation of the previous action
                 with the current graph. Used for pretraining.
                 (batch, prev_action_len, hidden_dim)
