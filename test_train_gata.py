@@ -16,7 +16,7 @@ from train_gata import (
 )
 from agent import EpsilonGreedyAgent
 from preprocessor import PAD, UNK, BOS, EOS
-from utils import increasing_mask, load_textworld_games
+from utils import increasing_mask
 
 
 def test_request_infos_for_train():
@@ -65,19 +65,19 @@ def test_gata_double_dqn_default_init():
     # train_env is initialized with the test games
     assert len(gata_ddqn.train_env.gamefiles) == 2
     assert gata_ddqn.train_env.request_infos == request_infos_for_train()
-    assert gata_ddqn.train_env.batch_size == gata_ddqn.hparams.game_batch_size
+    assert gata_ddqn.train_env.batch_size == gata_ddqn.hparams.train_game_batch_size
     assert gata_ddqn.train_env.spec.id.split("-")[1] == "train"
 
     # val_env is initialized with the test games
     assert len(gata_ddqn.val_env.gamefiles) == 2
     assert gata_ddqn.val_env.request_infos == request_infos_for_eval()
-    assert gata_ddqn.val_env.batch_size == gata_ddqn.hparams.game_batch_size
+    assert gata_ddqn.val_env.batch_size == gata_ddqn.hparams.eval_game_batch_size
     assert gata_ddqn.val_env.spec.id.split("-")[1] == "val"
 
     # test_env is initialized with the test games
     assert len(gata_ddqn.test_env.gamefiles) == 2
     assert gata_ddqn.test_env.request_infos == request_infos_for_eval()
-    assert gata_ddqn.test_env.batch_size == gata_ddqn.hparams.game_batch_size
+    assert gata_ddqn.test_env.batch_size == gata_ddqn.hparams.eval_game_batch_size
     assert gata_ddqn.test_env.spec.id.split("-")[1] == "test"
 
     # default words
@@ -372,31 +372,15 @@ def eps_greedy_agent():
 
 
 @pytest.fixture
-def replay_buffer(eps_greedy_agent):
-    max_episode_steps = 5
-    game_batch_size = 2
-    env = load_textworld_games(
-        "test-data/rl_games",
-        "train",
-        request_infos_for_train(),
-        max_episode_steps,
-        game_batch_size,
-    )
-    max_episodes = 100
-    episodes_before_learning = 10
-    yield_step_freq = 10
-    buffer_capacity = 20
-    buffer_reward_threshold = 0.1
-    sample_batch_size = 4
-    return ReplayBufferDataset(
-        env,
-        eps_greedy_agent,
-        max_episodes,
-        episodes_before_learning,
-        yield_step_freq,
-        buffer_capacity,
-        buffer_reward_threshold,
-        sample_batch_size,
+def replay_buffer_gata_double_dqn():
+    return GATADoubleDQN(
+        max_episodes=30,
+        train_game_batch_size=2,
+        train_max_episode_steps=5,
+        episodes_before_learning=10,
+        yield_step_freq=10,
+        replay_buffer_capacity=20,
+        train_sample_batch_size=4,
     )
 
 
@@ -425,18 +409,18 @@ def replay_buffer(eps_greedy_agent):
         ),
     ],
 )
-def test_replay_buffer_dataset_push_to_buffer(
-    replay_buffer, initial_buffer, batch_transitions, expected_buffer
+def test_gata_double_dqn_push_to_buffer(
+    replay_buffer_gata_double_dqn, initial_buffer, batch_transitions, expected_buffer
 ):
-    replay_buffer.buffer = initial_buffer
+    replay_buffer_gata_double_dqn.buffer = initial_buffer
     t_cache = TransitionCache(0)
     t_cache.cache = batch_transitions
-    replay_buffer.push_to_buffer(t_cache)
-    assert replay_buffer.buffer == expected_buffer
+    replay_buffer_gata_double_dqn.push_to_buffer(t_cache)
+    assert replay_buffer_gata_double_dqn.buffer == expected_buffer
 
 
-def test_replay_buffer_dataset_sample(replay_buffer):
-    replay_buffer.buffer = deque(
+def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
+    replay_buffer_gata_double_dqn.buffer = deque(
         [
             Transition(
                 ob=f"{i} o",
@@ -451,8 +435,8 @@ def test_replay_buffer_dataset_sample(replay_buffer):
             for i in range(10)
         ]
     )
-    batch = replay_buffer.sample()
-    batch_size = replay_buffer.sample_batch_size
+    batch = replay_buffer_gata_double_dqn.sample()
+    batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
     assert batch["obs_word_ids"].size() == (batch_size, 2)
     assert batch["obs_mask"].size() == (batch_size, 2)
     assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
@@ -467,9 +451,11 @@ def test_replay_buffer_dataset_sample(replay_buffer):
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
 
 
-def test_replay_buffer_dataset_iter(replay_buffer):
-    batch_size = replay_buffer.sample_batch_size
-    for batch in iter(replay_buffer):
+def test_replay_buffer_dataset_iter(replay_buffer_gata_double_dqn):
+    batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
+    for batch in iter(
+        ReplayBufferDataset(replay_buffer_gata_double_dqn.gen_train_batch)
+    ):
         assert batch["obs_word_ids"].size(0) == batch_size
         assert batch["obs_mask"].size() == batch["obs_word_ids"].size()
         assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
