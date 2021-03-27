@@ -290,66 +290,11 @@ def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
 
 
 @pytest.mark.parametrize(
-    "obs,action_cands,prev_actions,rnn_prev_hidden,filtered_action_cands",
-    [
-        (
-            ["observation for batch 0"],
-            [["action 1", "action 2", "action 3"]],
-            None,
-            False,
-            [{"action 1", "action 2", "action 3"}],
-        ),
-        (
-            ["observation for batch 0", "observation for batch 1"],
-            [
-                ["action 1", "action 2", "action 3"],
-                ["examine cookbook", "examine table", "look potato"],
-            ],
-            None,
-            False,
-            [
-                {"action 1", "action 2", "action 3"},
-                {"examine cookbook"},
-            ],
-        ),
-        (
-            ["observation for batch 0", "observation for batch 1"],
-            [
-                ["action 1", "action 2", "action 3"],
-                ["examine cookbook", "examine table", "look potato"],
-            ],
-            ["examine cookbook", "action 2"],
-            True,
-            [
-                {"action 1", "action 2", "action 3"},
-                {"examine cookbook"},
-            ],
-        ),
-    ],
+    "action_mask",
+    [torch.tensor([[1.0]]), torch.randint(2, (3, 5)).float()],
 )
-def test_eps_greedy_agent_act(
-    eps_greedy_agent,
-    obs,
-    action_cands,
-    prev_actions,
-    rnn_prev_hidden,
-    filtered_action_cands,
-):
-    chosen_actions, rnn_curr_hidden = eps_greedy_agent.act(
-        obs,
-        action_cands,
-        prev_actions=prev_actions,
-        rnn_prev_hidden=torch.rand(len(obs), eps_greedy_agent.graph_updater.hidden_dim)
-        if rnn_prev_hidden
-        else None,
-    )
-    for action, cands in zip(chosen_actions, filtered_action_cands):
-        # make sure the chosen action is within the filtered action candidates
-        assert action in cands
-    assert rnn_curr_hidden.size() == (
-        len(obs),
-        eps_greedy_agent.graph_updater.hidden_dim,
-    )
+def test_eps_greedy_agent_select_random(eps_greedy_agent, action_mask):
+    assert eps_greedy_agent.select_random(action_mask).size() == (action_mask.size(0),)
 
 
 @pytest.mark.parametrize(

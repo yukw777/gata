@@ -217,56 +217,19 @@ class EpsilonGreedyAgent(Agent):
         self.epsilon_anneal_episodes = epsilon_anneal_episodes
         self.epsilon = self.epsilon_anneal_from
 
+    @staticmethod
     @torch.no_grad()
-    def act(
-        self,
-        obs: List[str],
-        action_cands: List[List[str]],
-        prev_actions: Optional[List[str]] = None,
-        rnn_prev_hidden: Optional[torch.Tensor] = None,
-    ) -> Tuple[List[str], torch.Tensor]:
+    def select_random(action_mask: torch.Tensor) -> torch.Tensor:
         """
-        Take a batch of raw observations, action candidates, previous actions
-        and previous rnn hidden states and return a batch of actions according
-        to the epsilon greedy strategy.
+        Randomly draw an action.
+        We use the action_mask here b/c we want all the unmasked actions
+        to have the same probability to be selected, and the masked actions
+        zero probabilities.
 
-        If prev_actions is None, use ['restart', ...]
-
-        output: epsilon greedy chosen actions and current RNN hidden state
+        action_mask: (batch, num_action_cands)
+        output: (batch)
         """
-        # get the actions with max q (action score)
-        (
-            action_scores,
-            action_mask,
-            rnn_curr_hidden,
-            filtered_batch_action_cands,
-        ) = self.calculate_action_scores(
-            obs,
-            action_cands,
-            prev_actions=prev_actions,
-            rnn_prev_hidden=rnn_prev_hidden,
-        )
-        max_q_actions_idx = self.action_selector.select_max_q(
-            action_scores, action_mask
-        )
-        # (batch)
-
-        # randomly draw an action
-        # we use the action_mask here b/c we want all the unmasked actions
-        # to have the same probability to be selected, and the masked actions
-        # zero probabilities.
-        random_actions_idx = torch.multinomial(action_mask, 1).squeeze()
-        # (batch)
-
-        # select actions based on the epsilon greedy strategy
-        actions_idx = self.select_epsilon_greedy(max_q_actions_idx, random_actions_idx)
-        # (batch)
-
-        # decode the action strings
-        return (
-            self.decode_actions(filtered_batch_action_cands, actions_idx.tolist()),
-            rnn_curr_hidden,
-        )
+        return torch.multinomial(action_mask, 1).squeeze(dim=1)
 
     @torch.no_grad()
     def select_epsilon_greedy(
