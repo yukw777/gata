@@ -497,12 +497,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(ReplayBufferDataset(self.gen_train_batch))
+        return DataLoader(
+            ReplayBufferDataset(self.gen_train_batch),
+            batch_size=self.hparams.train_sample_batch_size,  # type: ignore
+            collate_fn=self.prepare_batch,
+        )
 
     def configure_optimizers(self):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
 
-    def gen_train_batch(self) -> Iterator[Dict[str, torch.Tensor]]:
+    def gen_train_batch(self) -> Iterator[Transition]:
         episodes_played = 0
         total_episode_steps = 0
         while episodes_played < self.hparams.max_episodes:  # type: ignore
@@ -531,7 +535,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 ):
                     # if we've played enough episodes to learn and we're at the
                     # yield frequency, yield a batch
-                    yield self.sample()
+                    yield from self.sample()
 
                 if all(prev_dones):
                     # if all the previous episodes are done, we can stop
@@ -634,12 +638,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             ):
                 self.buffer.extend(transitions)
 
-    def sample(self) -> Dict[str, torch.Tensor]:
-        indices = np.random.choice(
-            len(self.buffer),
-            size=self.hparams.train_sample_batch_size,  # type: ignore
-            replace=False,
-        )
+    def prepare_batch(self, transitions: List[Transition]) -> Dict[str, torch.Tensor]:
         obs: List[str] = []
         action_cands: List[List[str]] = []
         curr_graphs: List[torch.Tensor] = []
@@ -648,8 +647,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         next_obs: List[str] = []
         next_action_cands: List[List[str]] = []
         next_graphs: List[torch.Tensor] = []
-        for idx in indices:
-            transition = self.buffer[idx]
+        for transition in transitions:
             obs.append(transition.ob)
             action_cands.append(transition.action_cands)
             curr_graphs.append(transition.current_graph)
@@ -685,6 +683,14 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
         }
+
+    def sample(self) -> Iterator[Transition]:
+        for idx in np.random.choice(
+            len(self.buffer),
+            size=self.hparams.train_sample_batch_size,  # type: ignore
+            replace=False,
+        ):
+            yield self.buffer[idx]
 
 
 @hydra.main(config_path="train_gata_conf", config_name="config")

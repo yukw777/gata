@@ -12,7 +12,6 @@ from train_gata import (
     GATADoubleDQN,
     TransitionCache,
     Transition,
-    ReplayBufferDataset,
 )
 from agent import EpsilonGreedyAgent
 from preprocessor import PAD, UNK, BOS, EOS
@@ -435,8 +434,26 @@ def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
             for i in range(10)
         ]
     )
-    batch = replay_buffer_gata_double_dqn.sample()
-    batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
+    for transition in replay_buffer_gata_double_dqn.sample():
+        assert transition in replay_buffer_gata_double_dqn.buffer
+
+
+def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
+    transitions = [
+        Transition(
+            ob=f"{i} o",
+            action_cands=[f"{i} a1", f"{i} a2"],
+            current_graph=torch.rand(2, 1, 1),
+            action_id=random.randint(0, 1),
+            reward=random.random(),
+            next_ob=f"{i} next o",
+            next_action_cands=[f"{i} next a1", f"{i} next a2"],
+            next_graph=torch.rand(2, 1, 1),
+        )
+        for i in range(10)
+    ]
+    batch_size = len(transitions)
+    batch = replay_buffer_gata_double_dqn.prepare_batch(transitions)
     assert batch["obs_word_ids"].size() == (batch_size, 2)
     assert batch["obs_mask"].size() == (batch_size, 2)
     assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
@@ -451,11 +468,9 @@ def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
 
 
-def test_replay_buffer_dataset_iter(replay_buffer_gata_double_dqn):
+def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
     batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
-    for batch in iter(
-        ReplayBufferDataset(replay_buffer_gata_double_dqn.gen_train_batch)
-    ):
+    for batch in replay_buffer_gata_double_dqn.train_dataloader():
         assert batch["obs_word_ids"].size(0) == batch_size
         assert batch["obs_mask"].size() == batch["obs_word_ids"].size()
         assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
