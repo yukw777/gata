@@ -1,12 +1,15 @@
 import pytest
 import torch
 import torch.nn as nn
+import random
 
 from train_gata import (
     request_infos_for_train,
     request_infos_for_eval,
     get_game_dir,
     GATADoubleDQN,
+    TransitionCache,
+    Transition,
 )
 from preprocessor import PAD, UNK, BOS, EOS
 from utils import increasing_mask
@@ -265,3 +268,99 @@ def test_gata_double_dqn_training_step(
         ).ndimension()
         == 0
     )
+
+
+def test_transition_cache_batch_add():
+    t_cache = TransitionCache(3)
+
+    def generate_batch(step, dones):
+        return {
+            "obs": [f"{i}: step {step} obs" for i in range(3)],
+            "batch_action_cands": [
+                [
+                    f"{i}: step {step} act 1",
+                    f"{i}: step {step} act 2",
+                    f"{i}: step {step} act 3",
+                ]
+                for i in range(3)
+            ],
+            "current_graphs": torch.rand(3, 6, 4, 4),
+            "actions_idx": [random.randint(0, 2) for _ in range(3)],
+            "rewards": [random.random() for _ in range(3)],
+            "dones": dones,
+            "next_obs": [f"{i}: step {step} next obs" for i in range(3)],
+            "batch_next_action_cands": [
+                [
+                    f"{i}: step {step} next act 1",
+                    f"{i}: step {step} next act 2",
+                    f"{i}: step {step} next act 3",
+                ]
+                for i in range(3)
+            ],
+            "next_graphs": torch.rand(3, 6, 4, 4),
+        }
+
+    def compare_batch_transition(batch, batch_num, transition):
+        assert transition.ob == batch["obs"][batch_num]
+        assert transition.action_cands == batch["batch_action_cands"][batch_num]
+        assert transition.current_graph.equal(batch["current_graphs"][batch_num])
+        assert transition.action_id == batch["actions_idx"][batch_num]
+        assert transition.reward == batch["rewards"][batch_num]
+        assert transition.done == batch["dones"][batch_num]
+        assert transition.next_ob == batch["next_obs"][batch_num]
+        assert (
+            transition.next_action_cands == batch["batch_next_action_cands"][batch_num]
+        )
+        assert transition.next_graph.equal(batch["next_graphs"][batch_num])
+
+    # add a not done step
+    batch_0 = generate_batch(0, [False] * 3)
+    t_cache.batch_add(**batch_0)
+    for i in range(3):
+        assert len(t_cache.cache[i]) == 1
+        compare_batch_transition(batch_0, i, t_cache.cache[i][-1])
+
+    # add a done game
+    batch_1 = generate_batch(1, [False, True, False])
+    t_cache.batch_add(**batch_1)
+    for i in range(3):
+        assert len(t_cache.cache[i]) == 2
+        compare_batch_transition(batch_1, i, t_cache.cache[i][-1])
+
+    # add another done step
+    batch_2 = generate_batch(2, [False, True, False])
+    t_cache.batch_add(**batch_2)
+    for i in range(3):
+        if batch_2["dones"][i]:
+            # it shouldn't have been added
+            assert len(t_cache.cache[i]) == 2
+            compare_batch_transition(batch_1, i, t_cache.cache[i][-1])
+        else:
+            assert len(t_cache.cache[i]) == 3
+            compare_batch_transition(batch_2, i, t_cache.cache[i][-1])
+
+
+@pytest.mark.parametrize("step_size", [1, 3, 5])
+@pytest.mark.parametrize("batch_size", [1, 3, 5])
+def test_transition_cache_get_avg_rewards(batch_size, step_size):
+    t_cache = TransitionCache(batch_size)
+    batch_rewards = torch.rand(batch_size, step_size)
+    for i, rewards in enumerate(batch_rewards.tolist()):
+        for reward in rewards:
+            t_cache.cache[i].append(
+                Transition(
+                    reward=reward,
+                    ob=None,
+                    action_cands=None,
+                    current_graph=None,
+                    action_id=None,
+                    next_ob=None,
+                    next_action_cands=None,
+                    next_graph=None,
+                    done=None,
+                )
+            )
+    for avg, expected in zip(
+        t_cache.get_avg_rewards(), batch_rewards.mean(dim=1).tolist()
+    ):
+        assert pytest.approx(avg) == expected

@@ -3,8 +3,10 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import gym
+import numpy as np
 
-from typing import Optional, Tuple, Dict
+from dataclasses import dataclass
+from typing import Optional, Tuple, Dict, List
 from textworld import EnvInfos
 
 from utils import load_textworld_games
@@ -47,6 +49,96 @@ def get_game_dir(
         dataset + ("" if training_size is None else f"_{training_size}"),
         f"difficulty_level_{difficulty_level}",
     )
+
+
+@dataclass
+class Transition:
+    """
+    Represents a transition in one single game.
+    """
+
+    # game observation
+    ob: str
+    # action candidates
+    action_cands: List[str]
+    # current graph
+    current_graph: torch.Tensor
+    # chosen action ID
+    action_id: int
+    # received reward
+    reward: float
+    # next observation
+    next_ob: str
+    # next action candidates
+    next_action_cands: List[str]
+    # next graph
+    next_graph: torch.Tensor
+    # done
+    done: bool
+
+
+class TransitionCache:
+    def __init__(self, batch_size: int) -> None:
+        # cache[i][j] = j'th transition of i'th game
+        self.cache: List[List[Transition]] = [[] for _ in range(batch_size)]
+
+    def batch_add(
+        self,
+        obs: List[str],
+        batch_action_cands: List[List[str]],
+        current_graphs: torch.Tensor,
+        actions_idx: List[int],
+        rewards: List[float],
+        dones: List[bool],
+        next_obs: List[str],
+        batch_next_action_cands: List[List[str]],
+        next_graphs: torch.Tensor,
+    ) -> None:
+        for i, (
+            ob,
+            action_cands,
+            current_graph,
+            action_id,
+            reward,
+            done,
+            next_ob,
+            next_action_cands,
+            next_graph,
+        ) in enumerate(
+            zip(
+                obs,
+                batch_action_cands,
+                current_graphs,
+                actions_idx,
+                rewards,
+                dones,
+                next_obs,
+                batch_next_action_cands,
+                next_graphs,
+            )
+        ):
+            if len(self.cache[i]) > 0 and done and self.cache[i][-1].done:
+                # this game is already done, don't add this transition
+                continue
+            self.cache[i].append(
+                Transition(
+                    ob=ob,
+                    action_cands=action_cands,
+                    current_graph=current_graph,
+                    action_id=action_id,
+                    reward=reward,
+                    next_ob=next_ob,
+                    next_action_cands=next_action_cands,
+                    next_graph=next_graph,
+                    done=done,
+                )
+            )
+
+    def get_avg_rewards(self) -> List[float]:
+        return [
+            np.mean([transition.reward for transition in game])  # type: ignore
+            for game in self.cache
+        ]
 
 
 class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
