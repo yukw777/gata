@@ -2,13 +2,12 @@ import os
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-import gym
 import numpy as np
 import itertools
 import hydra
 
 from omegaconf import DictConfig, OmegaConf
-from hydra.utils import instantiate
+from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.loggers import WandbLogger
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Dict, List, Iterator, Deque, Callable, Iterable
@@ -172,6 +171,7 @@ class ReplayBufferDataset(IterableDataset):
 class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
     def __init__(
         self,
+        base_data_dir: Optional[str] = None,
         difficulty_level: int = 1,
         train_data_size: int = 1,
         max_episodes: int = 100000,
@@ -205,9 +205,6 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
         pretrained_graph_updater: Optional[GraphUpdater] = None,
-        train_env: Optional[gym.Env] = None,
-        val_env: Optional[gym.Env] = None,
-        test_env: Optional[gym.Env] = None,
         **kwargs,
     ) -> None:
         super().__init__()
@@ -243,40 +240,43 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "reward_discount",
         )
 
-        # load envs
-        if train_env is None:
-            # load the test rl data
-            self.train_env = load_textworld_games(
-                "test-data/rl_games",
-                "train",
-                request_infos_for_train(),
-                train_max_episode_steps,
-                train_game_batch_size,
+        # load the test rl data
+        self.train_env = load_textworld_games(
+            to_absolute_path(
+                get_game_dir(
+                    base_data_dir,
+                    "train",
+                    difficulty_level,
+                    training_size=train_data_size,
+                )
             )
-        else:
-            self.train_env = train_env
-        if val_env is None:
-            # load the test rl data
-            self.val_env = load_textworld_games(
-                "test-data/rl_games",
-                "val",
-                request_infos_for_eval(),
-                eval_max_episode_steps,
-                eval_game_batch_size,
-            )
-        else:
-            self.val_env = val_env
-        if test_env is None:
-            # load the test rl data
-            self.test_env = load_textworld_games(
-                "test-data/rl_games",
-                "test",
-                request_infos_for_eval(),
-                eval_max_episode_steps,
-                eval_game_batch_size,
-            )
-        else:
-            self.test_env = test_env
+            if base_data_dir is not None
+            else "test-data/rl_games",
+            "train",
+            request_infos_for_train(),
+            train_max_episode_steps,
+            train_game_batch_size,
+        )
+        # load the val rl data
+        self.val_env = load_textworld_games(
+            to_absolute_path(get_game_dir(base_data_dir, "valid", difficulty_level))
+            if base_data_dir is not None
+            else "test-data/rl_games",
+            "val",
+            request_infos_for_train(),
+            train_max_episode_steps,
+            train_game_batch_size,
+        )
+        # load the test rl data
+        self.test_env = load_textworld_games(
+            to_absolute_path(get_game_dir(base_data_dir, "test", difficulty_level))
+            if base_data_dir is not None
+            else "test-data/rl_games",
+            "test",
+            request_infos_for_eval(),
+            eval_max_episode_steps,
+            eval_game_batch_size,
+        )
 
         # initialize word (preprocessor), node and relation stuff
         (
@@ -285,9 +285,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             rel_name_word_ids,
             rel_name_mask,
         ) = self.init_word_node_rel(
-            word_vocab_path=word_vocab_path,
-            node_vocab_path=node_vocab_path,
-            relation_vocab_path=relation_vocab_path,
+            word_vocab_path=to_absolute_path(word_vocab_path)
+            if word_vocab_path is not None
+            else None,
+            node_vocab_path=to_absolute_path(node_vocab_path)
+            if node_vocab_path is not None
+            else None,
+            relation_vocab_path=to_absolute_path(relation_vocab_path)
+            if relation_vocab_path is not None
+            else None,
         )
 
         # main action selector
@@ -697,7 +703,7 @@ def main(cfg: DictConfig) -> None:
     trainer = pl.Trainer(**trainer_config)
 
     # instantiate the lightning module
-    lm = GATADoubleDQN(**cfg.model, **cfg.train)
+    lm = GATADoubleDQN(**cfg.model, **cfg.train, **cfg.data)
 
     # fit
     trainer.fit(lm)
