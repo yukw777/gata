@@ -5,14 +5,18 @@ import pytorch_lightning as pl
 import gym
 import numpy as np
 import itertools
+import hydra
 
+from omegaconf import DictConfig, OmegaConf
+from hydra.utils import instantiate
+from pytorch_lightning.loggers import WandbLogger
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Dict, List, Iterator, Deque, Callable, Iterable
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader
 from collections import deque
 
-from utils import load_textworld_games
+from utils import load_textworld_games, WandbSaveCallback
 from layers import WordNodeRelInitMixin
 from action_selector import ActionSelector
 from graph_updater import GraphUpdater
@@ -174,7 +178,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         train_max_episode_steps: int = 50,
         train_game_batch_size: int = 25,
         episodes_before_learning: int = 100,
-        yield_step_freq: int = 50,
+        training_step_freq: int = 50,
         replay_buffer_capacity: int = 500000,
         replay_buffer_reward_threshold: float = 0.1,
         train_sample_batch_size: int = 64,
@@ -214,7 +218,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "train_max_episode_steps",
             "train_game_batch_size",
             "episodes_before_learning",
-            "yield_step_freq",
+            "training_step_freq",
             "replay_buffer_capacity",
             "replay_buffer_reward_threshold",
             "train_sample_batch_size",
@@ -493,7 +497,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 self.agent,
                 self.hparams.max_episodes,  # type: ignore
                 self.hparams.episodes_before_learning,  # type: ignore
-                self.hparams.yield_step_freq,  # type: ignore
+                self.hparams.training_step_freq,  # type: ignore
                 self.hparams.replay_buffer_capacity,  # type: ignore
                 self.hparams.replay_buffer_reward_threshold,  # type: ignore
                 self.hparams.train_sample_batch_size,  # type: ignore
@@ -527,7 +531,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                     episodes_played
                     >= self.hparams.episodes_before_learning  # type: ignore
                     and total_episode_steps
-                    % self.hparams.yield_step_freq  # type: ignore
+                    % self.hparams.training_step_freq  # type: ignore
                     == 0
                 ):
                     # if we've played enough episodes to learn and we're at the
@@ -686,3 +690,29 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
         }
+
+
+@hydra.main(config_path="train_gata_conf", config_name="config")
+def main(cfg: DictConfig) -> None:
+    print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
+
+    # seed
+    pl.seed_everything(42)
+
+    # trainer
+    trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
+    assert isinstance(trainer_config, dict)
+    trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
+    if isinstance(trainer_config["logger"], WandbLogger):
+        trainer_config["callbacks"] = [WandbSaveCallback()]
+    trainer = pl.Trainer(**trainer_config)
+
+    # instantiate the lightning module
+    lm = GATADoubleDQN(**cfg.model, **cfg.train)
+
+    # fit
+    trainer.fit(lm)
+
+
+if __name__ == "__main__":
+    main()
