@@ -151,37 +151,32 @@ class Agent:
         ]
 
     def preprocess_action_cands(
-        self, batch_action_cands: List[List[str]]
-    ) -> Tuple[List[List[str]], torch.Tensor, torch.Tensor]:
+        self, action_cands: List[List[str]]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        batch_action_cands: a batch of "admissible commands" from the game
+        action_cands: filtered action candidates
 
         returns: (
-            filtered batch of action candidates: no look or examine actions
-                (except for examine cookbook),
             action_cand_word_ids of shape (batch, num_action_cands, action_cand_len)
             action_cand_mask of shape (batch, num_action_cands, action_cand_len)
         )
         """
-        # filter look and examine actions (except for examine cookbook)
-        batch_filtered_action_cands = self.filter_action_cands(batch_action_cands)
-
         # preprocess by flattening out action candidates
         (
             flat_action_cand_word_ids,
             flat_action_cand_mask,
         ) = self.preprocessor.preprocess(
-            list(chain.from_iterable(batch_filtered_action_cands)), device=self.device
+            list(chain.from_iterable(action_cands)), device=self.device
         )
 
-        max_num_action_cands = max(map(len, batch_filtered_action_cands))
+        max_num_action_cands = max(map(len, action_cands))
         max_action_cand_len = flat_action_cand_word_ids.size(1)
 
         # now pad by max_num_action_cands
         action_cand_word_ids_list: List[torch.Tensor] = []
         action_cand_mask_list: List[torch.Tensor] = []
         i = 0
-        for cands in batch_filtered_action_cands:
+        for cands in action_cands:
             unpadded_action_cand_word_ids = flat_action_cand_word_ids[
                 i : i + len(cands)
             ]
@@ -206,10 +201,8 @@ class Agent:
             action_cand_word_ids_list.append(padded_action_cand_word_ids)
             action_cand_mask_list.append(padded_action_cand_mask)
             i += len(cands)
-        return (
-            batch_filtered_action_cands,
-            torch.stack(action_cand_word_ids_list),
-            torch.stack(action_cand_mask_list),
+        return torch.stack(action_cand_word_ids_list), torch.stack(
+            action_cand_mask_list
         )
 
 
