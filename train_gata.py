@@ -189,10 +189,10 @@ class ReplayBufferDataset(IterableDataset):
             prev_actions: Optional[List[str]] = None
             prev_obs: List[str] = []
             prev_action_cands: List[List[str]] = []
-            prev_graph: torch.Tensor = torch.empty()
+            prev_graph: torch.Tensor = torch.empty(0)
             prev_actions_idx: List[int] = []
             prev_rewards: List[float] = []
-            prev_dones: List[bool] = []
+            prev_dones: List[bool] = [False] * self.env.batch_size
 
             # Play a batch of episodes.
             # In order to ensure that all of the transitions have the next state

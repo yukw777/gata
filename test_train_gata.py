@@ -365,8 +365,8 @@ def eps_greedy_agent():
         gata_double_dqn.graph_updater,
         gata_double_dqn.action_selector,
         gata_double_dqn.preprocessor,
-        1.0,
         0.1,
+        1.0,
         20,
     )
 
@@ -382,9 +382,9 @@ def replay_buffer(eps_greedy_agent):
         max_episode_steps,
         game_batch_size,
     )
-    max_episodes = 6
-    episodes_before_learning = 3
-    yield_step_freq = 5
+    max_episodes = 100
+    episodes_before_learning = 10
+    yield_step_freq = 10
     buffer_capacity = 20
     buffer_reward_threshold = 0.1
     sample_batch_size = 4
@@ -465,3 +465,23 @@ def test_replay_buffer_dataset_sample(replay_buffer):
     assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
+
+
+def test_replay_buffer_dataset_iter(replay_buffer):
+    batch_size = replay_buffer.sample_batch_size
+    for batch in iter(replay_buffer):
+        assert batch["obs_word_ids"].size(0) == batch_size
+        assert batch["obs_mask"].size() == batch["obs_word_ids"].size()
+        assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
+        assert batch["action_cand_word_ids"].size(0) == batch_size
+        assert batch["action_cand_mask"].size() == batch["action_cand_word_ids"].size()
+        assert batch["actions_idx"].size() == (batch_size,)
+        assert batch["rewards"].size() == (batch_size,)
+        assert batch["next_obs_word_ids"].size(0) == batch_size
+        assert batch["next_obs_mask"].size() == batch["next_obs_word_ids"].size()
+        assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
+        assert batch["next_action_cand_word_ids"].size(0) == batch_size
+        assert (
+            batch["next_action_cand_mask"].size()
+            == batch["next_action_cand_word_ids"].size()
+        )
