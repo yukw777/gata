@@ -74,6 +74,9 @@ class SpacyPreprocessor:
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.preprocess_tokenized([self.tokenize(self.clean(s)) for s in batch])
 
+    def batch_clean(self, batch_raw_str: List[str]) -> List[str]:
+        return [self.clean(raw_str) for raw_str in batch_raw_str]
+
     def clean(self, raw_str: Optional[str]) -> str:
         """
         Copied from the original GATA code (preproc())

@@ -64,6 +64,7 @@ def test_spacy_preprocessor_load_from_file():
     assert len(sp.word_to_id_dict) == 772
 
 
+@pytest.mark.parametrize("batch_size", list(range(3)))
 @pytest.mark.parametrize(
     "raw_str,cleaned",
     [
@@ -123,9 +124,10 @@ def test_spacy_preprocessor_load_from_file():
         ),
     ],
 )
-def test_spacy_preprocessor_clean(raw_str, cleaned):
+def test_spacy_preprocessor_clean(raw_str, cleaned, batch_size):
     sp = SpacyPreprocessor.load_from_file("vocabs/word_vocab.txt")
     assert sp.clean(raw_str) == cleaned
+    assert sp.batch_clean([raw_str] * batch_size) == [cleaned] * batch_size
 
 
 @pytest.mark.parametrize(
