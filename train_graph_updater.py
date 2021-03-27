@@ -7,10 +7,10 @@ import wandb
 import math
 
 from urllib.parse import urlparse
-from typing import List, Dict, Tuple, Optional, Any
+from typing import List, Dict, Tuple, Optional
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
-from pytorch_lightning.callbacks import ModelCheckpoint, Callback
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
 from torch.optim.lr_scheduler import LambdaLR
 
@@ -19,6 +19,7 @@ from utils import (
     generate_square_subsequent_mask,
     calculate_seq_f1,
     batchify,
+    WandbSaveCallback,
 )
 from preprocessor import BOS, EOS
 from graph_updater import GraphUpdater
@@ -646,18 +647,6 @@ class GraphUpdaterObsGen(WordNodeRelInitMixin, pl.LightningModule):
             "optimizer": optimizer,
             "lr_scheduler": {"scheduler": scheduler, "interval": "step"},
         }
-
-
-class WandbSaveCallback(Callback):
-    def on_save_checkpoint(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        checkpoint: Dict[str, Any],
-    ) -> dict:
-        if isinstance(trainer.logger, WandbLogger):
-            wandb.save(f"gata/{trainer.logger.version}/checkpoints/*.ckpt")
-        return {}
 
 
 @hydra.main(config_path="train_graph_updater_conf", config_name="config")
