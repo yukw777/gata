@@ -17,6 +17,7 @@ from layers import WordNodeRelInitMixin
 from action_selector import ActionSelector
 from graph_updater import GraphUpdater
 from agent import EpsilonGreedyAgent
+from optimizers import RAdam
 
 
 def request_infos_for_train() -> EnvInfos:
@@ -354,6 +355,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         replay_buffer_capacity: int = 500000,
         replay_buffer_reward_threshold: float = 0.1,
         train_sample_batch_size: int = 64,
+        learning_rate: float = 1e-3,
         eval_max_episode_steps: int = 100,
         eval_game_batch_size: int = 20,
         hidden_dim: int = 8,
@@ -392,6 +394,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "replay_buffer_capacity",
             "replay_buffer_reward_threshold",
             "train_sample_batch_size",
+            "learning_rate",
             "eval_max_episode_steps",
             "eval_game_batch_size",
             "hidden_dim",
@@ -668,3 +671,6 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 self.hparams.train_sample_batch_size,  # type: ignore
             )
         )
+
+    def configure_optimizers(self):
+        return RAdam(self.parameters(), lr=self.hparams.learning_rate)
