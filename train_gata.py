@@ -179,6 +179,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         replay_buffer_reward_threshold: float = 0.1,
         train_sample_batch_size: int = 64,
         learning_rate: float = 1e-3,
+        target_net_update_frequency: int = 500,
         eval_max_episode_steps: int = 100,
         eval_game_batch_size: int = 20,
         hidden_dim: int = 8,
@@ -218,6 +219,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "replay_buffer_reward_threshold",
             "train_sample_batch_size",
             "learning_rate",
+            "target_net_update_frequency",
             "eval_max_episode_steps",
             "eval_game_batch_size",
             "hidden_dim",
@@ -603,6 +605,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             self.push_to_buffer(transition_cache)
 
             # set up for the next batch of episodes
+            if (
+                (episodes_played + self.train_env.batch_size)
+                % self.hparams.target_net_update_frequency  # type: ignore
+                <= episodes_played
+                % self.hparams.target_net_update_frequency  # type: ignore
+            ):
+                # we update the target action selector self.train_env.batch_size times
+                # in a row
+                self.update_target_action_selector()
             if episodes_played >= self.hparams.episodes_before_learning:  # type: ignore
                 self.agent.update_epsilon(
                     episodes_played
