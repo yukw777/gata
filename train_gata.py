@@ -9,7 +9,7 @@ import itertools
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Dict, List, Iterator, Deque
 from textworld import EnvInfos
-from torch.utils.data import IterableDataset
+from torch.utils.data import IterableDataset, DataLoader
 from collections import deque
 
 from utils import load_textworld_games
@@ -347,9 +347,17 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
     def __init__(
         self,
         difficulty_level: int = 1,
-        training_size: int = 1,
-        max_episode_steps: int = 100,
-        game_batch_size: int = 25,
+        train_data_size: int = 1,
+        max_episodes: int = 100000,
+        train_max_episode_steps: int = 50,
+        train_game_batch_size: int = 25,
+        episodes_before_learning: int = 100,
+        yield_step_freq: int = 50,
+        replay_buffer_capacity: int = 500000,
+        replay_buffer_reward_threshold: float = 0.1,
+        train_sample_batch_size: int = 64,
+        eval_max_episode_steps: int = 100,
+        eval_game_batch_size: int = 20,
         hidden_dim: int = 8,
         word_emb_dim: int = 300,
         node_emb_dim: int = 12,
@@ -377,9 +385,17 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         super().__init__()
         self.save_hyperparameters(
             "difficulty_level",
-            "training_size",
-            "max_episode_steps",
-            "game_batch_size",
+            "train_data_size",
+            "max_episodes",
+            "train_max_episode_steps",
+            "train_game_batch_size",
+            "episodes_before_learning",
+            "yield_step_freq",
+            "replay_buffer_capacity",
+            "replay_buffer_reward_threshold",
+            "train_sample_batch_size",
+            "eval_max_episode_steps",
+            "eval_game_batch_size",
             "hidden_dim",
             "word_emb_dim",
             "node_emb_dim",
@@ -404,8 +420,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 "test-data/rl_games",
                 "train",
                 request_infos_for_train(),
-                max_episode_steps,
-                game_batch_size,
+                train_max_episode_steps,
+                train_game_batch_size,
             )
         else:
             self.train_env = train_env
@@ -415,8 +431,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 "test-data/rl_games",
                 "val",
                 request_infos_for_eval(),
-                max_episode_steps,
-                game_batch_size,
+                eval_max_episode_steps,
+                eval_game_batch_size,
             )
         else:
             self.val_env = val_env
@@ -426,8 +442,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 "test-data/rl_games",
                 "test",
                 request_infos_for_eval(),
-                max_episode_steps,
-                game_batch_size,
+                eval_max_episode_steps,
+                eval_game_batch_size,
             )
         else:
             self.test_env = test_env
@@ -524,6 +540,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
         # loss
         self.smooth_l1_loss = nn.SmoothL1Loss()
+
+        # agent
+        self.agent = EpsilonGreedyAgent(
+            self.graph_updater,
+            self.action_selector,
+            self.preprocessor,
+            self.hparams.epsilon_anneal_from,  # type: ignore
+            self.hparams.epsilon_anneal_to,  # type: ignore
+            self.hparams.epsilon_anneal_episodes,  # type: ignore
+        )
 
     def update_target_action_selector(self) -> None:
         self.target_action_selector.load_state_dict(self.action_selector.state_dict())
@@ -624,4 +650,18 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             q_values,
             batch["rewards"]
             + next_q_values * self.hparams.reward_discount,  # type: ignore
+        )
+
+    def train_dataloader(self) -> DataLoader:
+        return DataLoader(
+            ReplayBufferDataset(
+                self.train_env,
+                self.agent,
+                self.hparams.max_episodes,  # type: ignore
+                self.hparams.episodes_before_learning,  # type: ignore
+                self.hparams.yield_step_freq,  # type: ignore
+                self.hparams.replay_buffer_capacity,  # type: ignore
+                self.hparams.replay_buffer_reward_threshold,  # type: ignore
+                self.hparams.train_sample_batch_size,  # type: ignore
+            )
         )
