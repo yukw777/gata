@@ -87,8 +87,8 @@ class Agent:
     @torch.no_grad()
     def act(
         self,
-        obs: List[str],
-        action_cands: List[List[str]],
+        raw_obs: List[str],
+        raw_action_cands: List[List[str]],
         prev_actions: Optional[List[str]] = None,
         rnn_prev_hidden: Optional[torch.Tensor] = None,
     ) -> Tuple[List[str], torch.Tensor]:
@@ -96,26 +96,27 @@ class Agent:
         Take a batch of raw observations, action candidates, previous actions
         and previous rnn hidden states and return a matching batch of actions that
         maximizes the q value, as well as the new hidden state for the RNN cell.
-
-        If prev_actions is None, use ['restart', ...]
         """
-        (
-            action_scores,
-            action_mask,
-            rnn_curr_hidden,
-            filtered_batch_action_cands,
-        ) = self.calculate_action_scores(
+        # clean observations
+        obs = self.preprocessor.batch_clean(raw_obs)
+
+        # filter action cands
+        action_cands = self.filter_action_cands(raw_action_cands)
+
+        results = self.calculate_action_scores(
             obs,
             action_cands,
-            prev_actions=prev_actions,
+            prev_actions,
             rnn_prev_hidden=rnn_prev_hidden,
         )
-        actions_idx = self.action_selector.select_max_q(action_scores, action_mask)
+        actions_idx = self.action_selector.select_max_q(
+            results["action_scores"], results["action_mask"]
+        )
 
         # decode the action strings
         return (
-            self.decode_actions(filtered_batch_action_cands, actions_idx.tolist()),
-            rnn_curr_hidden,
+            self.decode_actions(action_cands, actions_idx.tolist()),
+            results["rnn_curr_hidden"],
         )
 
     @staticmethod
