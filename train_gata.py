@@ -263,9 +263,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             if base_data_dir is not None
             else "test-data/rl_games",
             "val",
-            request_infos_for_train(),
-            train_max_episode_steps,
-            train_game_batch_size,
+            request_infos_for_eval(),
+            eval_max_episode_steps,
+            eval_game_batch_size,
         )
         # load the test rl data
         self.test_env = load_textworld_games(
