@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import random
 
+from collections import deque
+
 from train_gata import (
     request_infos_for_train,
     request_infos_for_eval,
@@ -10,9 +12,11 @@ from train_gata import (
     GATADoubleDQN,
     TransitionCache,
     Transition,
+    ReplayBufferDataset,
 )
+from agent import EpsilonGreedyAgent
 from preprocessor import PAD, UNK, BOS, EOS
-from utils import increasing_mask
+from utils import increasing_mask, load_textworld_games
 
 
 def test_request_infos_for_train():
@@ -347,20 +351,85 @@ def test_transition_cache_get_avg_rewards(batch_size, step_size):
     batch_rewards = torch.rand(batch_size, step_size)
     for i, rewards in enumerate(batch_rewards.tolist()):
         for reward in rewards:
-            t_cache.cache[i].append(
-                Transition(
-                    reward=reward,
-                    ob=None,
-                    action_cands=None,
-                    current_graph=None,
-                    action_id=None,
-                    next_ob=None,
-                    next_action_cands=None,
-                    next_graph=None,
-                    done=None,
-                )
-            )
+            t_cache.cache[i].append(Transition(reward=reward))
     for avg, expected in zip(
         t_cache.get_avg_rewards(), batch_rewards.mean(dim=1).tolist()
     ):
         assert pytest.approx(avg) == expected
+
+
+@pytest.fixture
+def eps_greedy_agent():
+    gata_double_dqn = GATADoubleDQN(word_vocab_path="vocabs/word_vocab.txt")
+    return EpsilonGreedyAgent(
+        gata_double_dqn.graph_updater,
+        gata_double_dqn.action_selector,
+        gata_double_dqn.preprocessor,
+        1.0,
+        0.1,
+        20,
+    )
+
+
+@pytest.fixture
+def replay_buffer(eps_greedy_agent):
+    max_episode_steps = 5
+    game_batch_size = 2
+    env = load_textworld_games(
+        "test-data/rl_games",
+        "train",
+        request_infos_for_train(),
+        max_episode_steps,
+        game_batch_size,
+    )
+    max_episodes = 6
+    episodes_before_learning = 3
+    yield_step_freq = 5
+    buffer_capacity = 20
+    buffer_reward_threshold = 0.1
+    sample_batch_size = 4
+    return ReplayBufferDataset(
+        env,
+        eps_greedy_agent,
+        max_episodes,
+        episodes_before_learning,
+        yield_step_freq,
+        buffer_capacity,
+        buffer_reward_threshold,
+        sample_batch_size,
+    )
+
+
+@pytest.mark.parametrize(
+    "initial_buffer,batch_transitions,expected_buffer",
+    [
+        (
+            deque(),
+            [[Transition(reward=1.0)], [Transition(reward=1.0)]],
+            deque([Transition(reward=1.0), Transition(reward=1.0)]),
+        ),
+        (
+            deque([Transition(reward=1.0), Transition(reward=0.5)]),
+            [
+                [Transition(reward=2.0), Transition(reward=1.0)],
+                [Transition(reward=0.05)],
+            ],
+            deque(
+                [
+                    Transition(reward=1.0),
+                    Transition(reward=0.5),
+                    Transition(reward=1.0),
+                    Transition(reward=0.5),
+                ]
+            ),
+        ),
+    ],
+)
+def test_replay_buffer_dataset_push_to_buffer(
+    replay_buffer, initial_buffer, batch_transitions, expected_buffer
+):
+    replay_buffer.buffer = initial_buffer
+    t_cache = TransitionCache(0)
+    t_cache.cache = batch_transitions
+    replay_buffer.push_to_buffer(t_cache)
+    assert replay_buffer.buffer == expected_buffer

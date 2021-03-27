@@ -4,15 +4,19 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import gym
 import numpy as np
+import itertools
 
-from dataclasses import dataclass
-from typing import Optional, Tuple, Dict, List
+from dataclasses import dataclass, field
+from typing import Optional, Tuple, Dict, List, Iterator, Deque
 from textworld import EnvInfos
+from torch.utils.data import IterableDataset
+from collections import deque
 
 from utils import load_textworld_games
 from layers import WordNodeRelInitMixin
 from action_selector import ActionSelector
 from graph_updater import GraphUpdater
+from agent import EpsilonGreedyAgent
 
 
 def request_infos_for_train() -> EnvInfos:
@@ -54,32 +58,43 @@ def get_game_dir(
 @dataclass
 class Transition:
     """
-    Represents a transition in one single game.
+    Represents a transition in one single episode.
     """
 
-    # game observation
-    ob: str
+    # episode observation
+    ob: str = ""
     # action candidates
-    action_cands: List[str]
+    action_cands: List[str] = field(default_factory=list)
     # current graph
-    current_graph: torch.Tensor
+    current_graph: torch.Tensor = field(
+        default_factory=lambda: torch.empty(0), compare=False, hash=True
+    )
     # chosen action ID
-    action_id: int
+    action_id: int = 0
     # received reward
-    reward: float
+    reward: float = 0.0
     # next observation
-    next_ob: str
+    next_ob: str = ""
     # next action candidates
-    next_action_cands: List[str]
+    next_action_cands: List[str] = field(default_factory=list)
     # next graph
-    next_graph: torch.Tensor
+    next_graph: torch.Tensor = field(
+        default_factory=lambda: torch.empty(0), compare=False, hash=True
+    )
     # done
-    done: bool
+    done: bool = False
+
+    def __eq__(self, other):
+        if super().__eq__(other):
+            return self.current_graph.equal(
+                other.current_graph
+            ) and self.next_graph.equal(other.next_graph)
+        return False
 
 
 class TransitionCache:
     def __init__(self, batch_size: int) -> None:
-        # cache[i][j] = j'th transition of i'th game
+        # cache[i][j] = j'th transition of i'th episode
         self.cache: List[List[Transition]] = [[] for _ in range(batch_size)]
 
     def batch_add(
@@ -118,7 +133,7 @@ class TransitionCache:
             )
         ):
             if len(self.cache[i]) > 0 and done and self.cache[i][-1].done:
-                # this game is already done, don't add this transition
+                # this episode is already done, don't add this transition
                 continue
             self.cache[i].append(
                 Transition(
@@ -136,9 +151,196 @@ class TransitionCache:
 
     def get_avg_rewards(self) -> List[float]:
         return [
-            np.mean([transition.reward for transition in game])  # type: ignore
-            for game in self.cache
+            np.mean([transition.reward for transition in episode])  # type: ignore
+            for episode in self.cache
         ]
+
+
+class ReplayBufferDataset(IterableDataset):
+    def __init__(
+        self,
+        env: gym.Env,
+        agent: EpsilonGreedyAgent,
+        max_episodes: int,
+        episodes_before_learning: int,
+        yield_step_freq: int,
+        buffer_capacity: int,
+        buffer_reward_threshold: float,
+        sample_batch_size: int,
+        seed: int = 123,
+    ) -> None:
+        self.env = env
+        self.env.seed(seed)
+        self.agent = agent
+        self.max_episodes = max_episodes
+        self.episodes_before_learning = episodes_before_learning
+        # batch yield frequency in episode steps
+        self.yield_step_freq = yield_step_freq
+        self.buffer_reward_threshold = buffer_reward_threshold
+        self.sample_batch_size = sample_batch_size
+        self.buffer: Deque[Transition] = deque(maxlen=buffer_capacity)
+
+    def __iter__(self) -> Iterator[Dict[str, torch.Tensor]]:
+        episodes_played = 0
+        total_episode_steps = 0
+        while episodes_played < self.max_episodes:
+            transition_cache = TransitionCache(self.env.batch_size)
+            rnn_prev_hidden: Optional[torch.Tensor] = None
+            prev_actions: Optional[List[str]] = None
+            prev_obs: List[str] = []
+            prev_action_cands: List[List[str]] = []
+            prev_graph: torch.Tensor = torch.empty()
+            prev_actions_idx: List[int] = []
+            prev_rewards: List[float] = []
+            prev_dones: List[bool] = []
+
+            # Play a batch of episodes.
+            # In order to ensure that all of the transitions have the next state
+            # so we collect transitions one step shifted.
+            raw_obs, infos = self.env.reset()
+            for step in itertools.count():
+                # Check if we should yield a sample
+                if (
+                    episodes_played >= self.episodes_before_learning
+                    and total_episode_steps % self.yield_step_freq == 0
+                ):
+                    # if we've played enough episodes to learn and we're at the
+                    # yield frequency, yield a batch
+                    yield self.sample()
+
+                if all(prev_dones):
+                    # if all the previous episodes are done, we can stop
+                    break
+
+                # now take a step
+                # clean observations
+                obs = self.agent.preprocessor.batch_clean(raw_obs)
+
+                # filter action cands
+                action_cands = self.agent.filter_action_cands(
+                    infos["admissible_commands"]
+                )
+                results = self.agent.calculate_action_scores(
+                    obs,
+                    action_cands,
+                    prev_actions=prev_actions,
+                    rnn_prev_hidden=rnn_prev_hidden,
+                )
+                curr_graph = results["curr_graph"].cpu()
+                # if we took a step before, add a transition
+                if prev_actions is not None:
+                    # add the previous transition to the cache
+                    transition_cache.batch_add(
+                        prev_obs,
+                        prev_action_cands,
+                        prev_graph,
+                        prev_actions_idx,
+                        prev_rewards,
+                        prev_dones,
+                        obs,
+                        action_cands,
+                        curr_graph,
+                    )
+
+                # now pick an action
+                if episodes_played < self.episodes_before_learning:
+                    # select actions randomly
+                    actions_idx = self.agent.select_random(
+                        results["action_mask"]
+                    ).tolist()
+                else:
+                    # select actions based on the epsilon greedy strategy
+                    actions_idx = self.agent.select_epsilon_greedy(
+                        self.agent.action_selector.select_max_q(
+                            results["action_scores"], results["action_mask"]
+                        ),
+                        self.agent.select_random(results["action_mask"]),
+                    ).tolist()
+                    # (batch)
+
+                # take a step
+                prev_actions = self.agent.decode_actions(action_cands, actions_idx)
+                raw_obs, rewards, dones, infos = self.env.step(prev_actions)
+
+                # set up the next step
+                # first save the previous state
+                prev_obs = obs
+                prev_action_cands = action_cands
+                prev_graph = curr_graph
+                prev_actions_idx = actions_idx
+                prev_rewards = rewards
+                prev_dones = dones
+                rnn_prev_hidden = results["rnn_curr_hidden"]
+                total_episode_steps += 1
+            # push transitions into the buffer
+            self.push_to_buffer(transition_cache)
+
+            # set up for the next batch of episodes
+            if episodes_played >= self.episodes_before_learning:
+                self.agent.update_epsilon(
+                    episodes_played - self.episodes_before_learning
+                )
+            episodes_played += self.env.batch_size
+
+    def push_to_buffer(self, t_cache: TransitionCache) -> None:
+        buffer_avg_reward = 0.0
+        if len(self.buffer) > 0:
+            buffer_avg_reward = np.mean(  # type: ignore
+                [transition.reward for transition in self.buffer]
+            )
+        for avg_reward, transitions in zip(t_cache.get_avg_rewards(), t_cache.cache):
+            if avg_reward >= buffer_avg_reward * self.buffer_reward_threshold:
+                self.buffer.extend(transitions)
+
+    def sample(self) -> Dict[str, torch.Tensor]:
+        indices = np.random.choice(
+            len(self.buffer), size=self.sample_batch_size, replace=False
+        )
+        obs: List[str] = []
+        action_cands: List[List[str]] = []
+        curr_graphs: List[torch.Tensor] = []
+        actions_idx: List[int] = []
+        rewards: List[float] = []
+        next_obs: List[str] = []
+        next_action_cands: List[List[str]] = []
+        next_graphs: List[torch.Tensor] = []
+        for idx in indices:
+            transition = self.buffer[idx]
+            obs.append(transition.ob)
+            action_cands.append(transition.action_cands)
+            curr_graphs.append(transition.current_graph)
+            actions_idx.append(transition.action_id)
+            rewards.append(transition.reward)
+            next_obs.append(transition.next_ob)
+            next_action_cands.append(transition.next_action_cands)
+            next_graphs.append(transition.next_graph)
+
+        # preprocess
+        obs_word_ids, obs_mask = self.agent.preprocessor.preprocess(obs)
+        (
+            action_cand_word_ids,
+            action_cand_mask,
+        ) = self.agent.preprocess_action_cands(action_cands)
+        next_obs_word_ids, next_obs_mask = self.agent.preprocessor.preprocess(next_obs)
+        (
+            next_action_cand_word_ids,
+            next_action_cand_mask,
+        ) = self.agent.preprocess_action_cands(next_action_cands)
+
+        return {
+            "obs_word_ids": obs_word_ids,
+            "obs_mask": obs_mask,
+            "current_graph": torch.stack(curr_graphs),
+            "action_cand_word_ids": action_cand_word_ids,
+            "action_cand_mask": action_cand_mask,
+            "actions_idx": torch.tensor(actions_idx),
+            "rewards": torch.tensor(rewards),
+            "next_obs_word_ids": next_obs_word_ids,
+            "next_obs_mask": next_obs_mask,
+            "next_graph": torch.stack(next_graphs),
+            "next_action_cand_word_ids": next_action_cand_word_ids,
+            "next_action_cand_mask": next_action_cand_mask,
+        }
 
 
 class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
@@ -162,7 +364,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         epsilon_anneal_from: float = 1.0,
         epsilon_anneal_to: float = 0.1,
         epsilon_anneal_episodes: int = 20000,
-        game_reward_discount: float = 0.9,
+        reward_discount: float = 0.9,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
@@ -192,7 +394,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "epsilon_anneal_from",
             "epsilon_anneal_to",
             "epsilon_anneal_episodes",
-            "game_reward_discount",
+            "reward_discount",
         )
 
         # load envs
@@ -421,5 +623,5 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         return self.smooth_l1_loss(
             q_values,
             batch["rewards"]
-            + next_q_values * self.hparams.game_reward_discount,  # type: ignore
+            + next_q_values * self.hparams.reward_discount,  # type: ignore
         )
