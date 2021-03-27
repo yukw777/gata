@@ -167,10 +167,8 @@ class ReplayBufferDataset(IterableDataset):
         buffer_capacity: int,
         buffer_reward_threshold: float,
         sample_batch_size: int,
-        seed: int = 123,
     ) -> None:
         self.env = env
-        self.env.seed(seed)
         self.agent = agent
         self.max_episodes = max_episodes
         self.episodes_before_learning = episodes_before_learning
@@ -550,6 +548,11 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             self.hparams.epsilon_anneal_to,  # type: ignore
             self.hparams.epsilon_anneal_episodes,  # type: ignore
         )
+
+    def seed_envs(self, seed: int) -> None:
+        self.train_env.seed(seed)
+        self.val_env.seed(seed)
+        self.test_env.seed(seed)
 
     def update_target_action_selector(self) -> None:
         self.target_action_selector.load_state_dict(self.action_selector.state_dict())
