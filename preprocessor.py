@@ -60,7 +60,10 @@ class SpacyPreprocessor:
     def preprocess_tokenized(
         self, tokenized_batch: List[List[str]], device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.pad([self.words_to_ids(tokenized) for tokenized in tokenized_batch])
+        return self.pad(
+            [self.words_to_ids(tokenized) for tokenized in tokenized_batch],
+            device=device,
+        )
 
     def preprocess(
         self, batch: List[str], device: Optional[torch.device] = None
@@ -72,7 +75,9 @@ class SpacyPreprocessor:
     def clean_and_preprocess(
         self, batch: List[str], device: Optional[torch.device] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.preprocess_tokenized([self.tokenize(self.clean(s)) for s in batch])
+        return self.preprocess_tokenized(
+            [self.tokenize(self.clean(s)) for s in batch], device=device
+        )
 
     def batch_clean(self, batch_raw_str: List[str]) -> List[str]:
         return [self.clean(raw_str) for raw_str in batch_raw_str]

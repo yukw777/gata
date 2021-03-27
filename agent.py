@@ -22,7 +22,9 @@ class Agent:
         self.graph_updater = graph_updater
         self.action_selector = action_selector
         self.preprocessor = preprocessor
-        self.device = graph_updater.node_embeddings.weight.device
+
+    def get_device(self) -> torch.device:
+        return self.graph_updater.node_embeddings.weight.device
 
     @torch.no_grad()
     def calculate_action_scores(
@@ -42,15 +44,17 @@ class Agent:
             'curr_graph': (batch, num_relation, num_node, num_node)
         }
         """
+        device = self.get_device()
+
         # preprocess observations
-        obs_word_ids, obs_mask = self.preprocessor.preprocess(obs, device=self.device)
+        obs_word_ids, obs_mask = self.preprocessor.preprocess(obs, device=device)
 
         # set initial prev_actions if necessary
         if prev_actions is None:
             prev_actions = ["restart"] * len(obs)
         # preprocess previous actions
         prev_action_word_ids, prev_action_mask = self.preprocessor.preprocess(
-            prev_actions, device=self.device
+            prev_actions, device=device
         )
 
         # preprocess action candidates
@@ -156,12 +160,14 @@ class Agent:
             action_cand_mask of shape (batch, num_action_cands, action_cand_len)
         )
         """
+        device = self.get_device()
+
         # preprocess by flattening out action candidates
         (
             flat_action_cand_word_ids,
             flat_action_cand_mask,
         ) = self.preprocessor.preprocess(
-            list(chain.from_iterable(action_cands)), device=self.device
+            list(chain.from_iterable(action_cands)), device=device
         )
 
         max_num_action_cands = max(map(len, action_cands))
@@ -181,13 +187,18 @@ class Agent:
                 padded_action_cand_word_ids = torch.cat(
                     [
                         unpadded_action_cand_word_ids,
-                        torch.zeros(pad_len, max_action_cand_len, dtype=torch.long),
+                        torch.zeros(
+                            pad_len,
+                            max_action_cand_len,
+                            dtype=torch.long,
+                            device=device,
+                        ),
                     ]
                 )
                 padded_action_cand_mask = torch.cat(
                     [
                         unpadded_action_cand_mask,
-                        torch.zeros(pad_len, max_action_cand_len),
+                        torch.zeros(pad_len, max_action_cand_len, device=device),
                     ]
                 )
             else:
@@ -241,10 +252,12 @@ class EpsilonGreedyAgent(Agent):
 
         output: selected actions based on the epsilon greedy strategy (batch)
         """
+        device = self.get_device()
+
         # epsilon greedy: epsilon is the probability for using random actions
         batch_size = max_q_actions_idx.size(0)
         choose_random = torch.bernoulli(
-            torch.tensor([self.epsilon] * batch_size, device=self.device)
+            torch.tensor([self.epsilon] * batch_size, device=device)
         )
         # (batch)
         return (
