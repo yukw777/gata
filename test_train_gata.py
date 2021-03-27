@@ -433,3 +433,35 @@ def test_replay_buffer_dataset_push_to_buffer(
     t_cache.cache = batch_transitions
     replay_buffer.push_to_buffer(t_cache)
     assert replay_buffer.buffer == expected_buffer
+
+
+def test_replay_buffer_dataset_sample(replay_buffer):
+    replay_buffer.buffer = deque(
+        [
+            Transition(
+                ob=f"{i} o",
+                action_cands=[f"{i} a1", f"{i} a2"],
+                current_graph=torch.rand(2, 1, 1),
+                action_id=random.randint(0, 1),
+                reward=random.random(),
+                next_ob=f"{i} next o",
+                next_action_cands=[f"{i} next a1", f"{i} next a2"],
+                next_graph=torch.rand(2, 1, 1),
+            )
+            for i in range(10)
+        ]
+    )
+    batch = replay_buffer.sample()
+    batch_size = replay_buffer.sample_batch_size
+    assert batch["obs_word_ids"].size() == (batch_size, 2)
+    assert batch["obs_mask"].size() == (batch_size, 2)
+    assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
+    assert batch["action_cand_word_ids"].size() == (batch_size, 2, 2)
+    assert batch["action_cand_mask"].size() == (batch_size, 2, 2)
+    assert batch["actions_idx"].size() == (batch_size,)
+    assert batch["rewards"].size() == (batch_size,)
+    assert batch["next_obs_word_ids"].size() == (batch_size, 3)
+    assert batch["next_obs_mask"].size() == (batch_size, 3)
+    assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
+    assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
+    assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
