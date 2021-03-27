@@ -491,18 +491,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
     def train_dataloader(self) -> DataLoader:
-        return DataLoader(
-            ReplayBufferDataset(
-                self.train_env,
-                self.agent,
-                self.hparams.max_episodes,  # type: ignore
-                self.hparams.episodes_before_learning,  # type: ignore
-                self.hparams.training_step_freq,  # type: ignore
-                self.hparams.replay_buffer_capacity,  # type: ignore
-                self.hparams.replay_buffer_reward_threshold,  # type: ignore
-                self.hparams.train_sample_batch_size,  # type: ignore
-            )
-        )
+        return DataLoader(ReplayBufferDataset(self.gen_train_batch))
 
     def configure_optimizers(self):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
