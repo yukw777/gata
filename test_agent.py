@@ -150,8 +150,7 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
 
 
 @pytest.mark.parametrize(
-    "obs,action_cands,prev_actions,rnn_prev_hidden,batch,"
-    "num_action_cands,expected_filtered",
+    "obs,action_cands,prev_actions,rnn_prev_hidden,batch,num_action_cands",
     [
         (
             ["observation for batch 0"],
@@ -160,7 +159,6 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
             False,
             1,
             3,
-            [["action 1", "action 2", "action 3"]],
         ),
         (
             ["observation for batch 0", "observation for batch 1"],
@@ -172,10 +170,6 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
             False,
             2,
             3,
-            [
-                ["action 1", "action 2", "action 3"],
-                ["examine cookbook"],
-            ],
         ),
         (
             ["observation for batch 0", "observation for batch 1"],
@@ -187,10 +181,6 @@ def test_agent_filter_action_cands(agent, batch_action_cands, expected_filtered)
             True,
             2,
             3,
-            [
-                ["action 1", "action 2", "action 3"],
-                ["examine cookbook"],
-            ],
         ),
     ],
 )
@@ -202,14 +192,8 @@ def test_agent_calculate_action_scores(
     rnn_prev_hidden,
     batch,
     num_action_cands,
-    expected_filtered,
 ):
-    (
-        action_scores,
-        action_mask,
-        rnn_curr_hidden,
-        filtered,
-    ) = agent.calculate_action_scores(
+    results = agent.calculate_action_scores(
         obs,
         action_cands,
         prev_actions=prev_actions,
@@ -217,10 +201,15 @@ def test_agent_calculate_action_scores(
         if rnn_prev_hidden
         else None,
     )
-    assert action_scores.size() == (batch, num_action_cands)
-    assert action_mask.size() == (batch, num_action_cands)
-    assert rnn_curr_hidden.size() == (batch, agent.graph_updater.hidden_dim)
-    assert filtered == expected_filtered
+    assert results["action_scores"].size() == (batch, num_action_cands)
+    assert results["action_mask"].size() == (batch, num_action_cands)
+    assert results["rnn_curr_hidden"].size() == (batch, agent.graph_updater.hidden_dim)
+    assert results["curr_graph"].size() == (
+        batch,
+        agent.graph_updater.num_relations,
+        agent.graph_updater.num_nodes,
+        agent.graph_updater.num_nodes,
+    )
 
 
 @pytest.mark.parametrize(

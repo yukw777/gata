@@ -1,6 +1,6 @@
 import torch
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from itertools import chain
 
 from graph_updater import GraphUpdater
@@ -31,36 +31,30 @@ class Agent:
         action_cands: List[List[str]],
         prev_actions: Optional[List[str]] = None,
         rnn_prev_hidden: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[List[str]]]:
+    ) -> Dict[str, torch.Tensor]:
         """
-        Take a batch of raw observations, action candidates, previous actions
-        and previous rnn hidden states (batch, hidden_dim) and return a matching
-        batch of action indices that maximizes the q value.
-
         If prev_actions is None, use ['restart', ...]
 
-        output: (
-            action scores of shape (batch, num_action_cands)
-            action mask of shape (batch, num_action_cands)
-            current rnn hiden of shape (batch, hidden_dim)
-            filtered list of action candidates,
-        )
+        output: {
+            'action_scores': (batch, num_action_cands)
+            'action_mask': (batch, num_action_cands)
+            'rnn_curr_hidden': (batch, hidden_dim)
+            'curr_graph': (batch, num_relation, num_node, num_node)
+        }
         """
         # preprocess observations
-        obs_word_ids, obs_mask = self.preprocessor.clean_and_preprocess(
-            obs, device=self.device
-        )
+        obs_word_ids, obs_mask = self.preprocessor.preprocess(obs, device=self.device)
 
-        # preprocess previous actions
+        # set initial prev_actions if necessary
         if prev_actions is None:
             prev_actions = ["restart"] * len(obs)
+        # preprocess previous actions
         prev_action_word_ids, prev_action_mask = self.preprocessor.preprocess(
             prev_actions, device=self.device
         )
 
         # preprocess action candidates
         (
-            filtered_batch_action_cands,
             action_cand_word_ids,
             action_cand_mask,
         ) = self.preprocess_action_cands(action_cands)
@@ -83,12 +77,12 @@ class Agent:
             action_cand_mask,
         )
 
-        return (
-            action_scores,
-            action_mask,
-            graph_updater_results["h_t"],
-            filtered_batch_action_cands,
-        )
+        return {
+            "action_scores": action_scores,
+            "action_mask": action_mask,
+            "rnn_curr_hidden": graph_updater_results["h_t"],
+            "curr_graph": graph_updater_results["g_t"],
+        }
 
     @torch.no_grad()
     def act(
