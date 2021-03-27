@@ -291,7 +291,10 @@ def test_eps_greedy_agent_select_epsilon_greedy(eps_greedy_agent):
 
 @pytest.mark.parametrize(
     "action_mask",
-    [torch.tensor([[1.0]]), torch.randint(2, (3, 5)).float()],
+    [
+        torch.tensor([[1.0]]),
+        torch.tensor([[1.0, 1.0, 1.0, 1.0, 1.0], [1.0, 1.0, 0.0, 0.0, 0.0]]),
+    ],
 )
 def test_eps_greedy_agent_select_random(eps_greedy_agent, action_mask):
     assert eps_greedy_agent.select_random(action_mask).size() == (action_mask.size(0),)
