@@ -632,14 +632,14 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             self.push_to_buffer(transition_cache)
 
             # set up for the next batch of episodes
+            # episodes_played increments by self.train_env.batch_size
+            # so we have to compare these to mods
             if (
                 (episodes_played + self.train_env.batch_size)
                 % self.hparams.target_net_update_frequency  # type: ignore
                 <= episodes_played
                 % self.hparams.target_net_update_frequency  # type: ignore
             ):
-                # we update the target action selector self.train_env.batch_size times
-                # in a row
                 self.update_target_action_selector()
             if episodes_played >= self.hparams.episodes_before_learning:  # type: ignore
                 self.agent.update_epsilon(
