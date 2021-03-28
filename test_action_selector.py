@@ -24,17 +24,19 @@ def test_action_scorer(
 ):
     action_scorer = ActionScorer(hidden_dim, num_heads)
 
-    action_scores, action_mask = action_scorer(
-        torch.rand(batch_size, num_action_cands, action_cand_len, hidden_dim),
-        increasing_mask(num_action_cands, action_cand_len, start_with_zero=True)
-        .unsqueeze(0)
-        .expand(batch_size, -1, -1),
-        torch.rand(batch_size, obs_len, hidden_dim),
-        torch.rand(batch_size, num_node, hidden_dim),
-        increasing_mask(batch_size, obs_len),
+    assert (
+        action_scorer(
+            torch.rand(batch_size, num_action_cands, action_cand_len, hidden_dim),
+            increasing_mask(num_action_cands, action_cand_len, start_with_zero=True)
+            .unsqueeze(0)
+            .expand(batch_size, -1, -1),
+            torch.randint(2, (batch_size, num_action_cands)),
+            torch.rand(batch_size, obs_len, hidden_dim),
+            torch.rand(batch_size, num_node, hidden_dim),
+            increasing_mask(batch_size, obs_len),
+        ).size()
+        == (batch_size, num_action_cands)
     )
-    assert action_scores.size() == (batch_size, num_action_cands)
-    assert action_mask.size() == (batch_size, num_action_cands)
 
 
 @pytest.mark.parametrize(
@@ -89,17 +91,19 @@ def test_action_selector(
         torch.randint(num_words, (num_relations, 3)),
         increasing_mask(num_relations, 3),
     )
-    action_scores, action_mask = action_selector(
-        torch.randint(num_words, (batch_size, obs_len)),
-        increasing_mask(batch_size, obs_len),
-        torch.rand(batch_size, num_relations, num_nodes, num_nodes),
-        torch.randint(num_words, (batch_size, num_action_cands, action_cand_len)),
-        increasing_mask(batch_size * num_action_cands, action_cand_len).view(
-            batch_size, num_action_cands, action_cand_len
-        ),
+    assert (
+        action_selector(
+            torch.randint(num_words, (batch_size, obs_len)),
+            increasing_mask(batch_size, obs_len),
+            torch.rand(batch_size, num_relations, num_nodes, num_nodes),
+            torch.randint(num_words, (batch_size, num_action_cands, action_cand_len)),
+            increasing_mask(batch_size * num_action_cands, action_cand_len).view(
+                batch_size, num_action_cands, action_cand_len
+            ),
+            increasing_mask(batch_size, num_action_cands),
+        ).size()
+        == (batch_size, num_action_cands)
     )
-    assert action_scores.size() == (batch_size, num_action_cands)
-    assert action_mask.size() == (batch_size, num_action_cands)
 
 
 @pytest.mark.parametrize(

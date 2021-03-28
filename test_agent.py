@@ -43,7 +43,8 @@ def eps_greedy_agent():
 
 
 @pytest.mark.parametrize(
-    "batch_action_cands,expected_action_cand_word_ids,expected_action_cand_mask",
+    "batch_action_cands,expected_action_cand_word_ids,expected_action_cand_mask,"
+    "expected_action_mask",
     [
         (
             [
@@ -59,6 +60,7 @@ def eps_greedy_agent():
                 ]
             ),
             torch.ones(3, 2, 2, dtype=torch.float),
+            torch.ones(3, 2, dtype=torch.float),
         ),
         (
             [
@@ -69,15 +71,23 @@ def eps_greedy_agent():
             torch.tensor(
                 [
                     [[2, 3, 4, 5], [2, 3, 0, 0]],
-                    [[2, 5, 0, 0], [0, 0, 0, 0]],
-                    [[2, 3, 0, 0], [0, 0, 0, 0]],
+                    [[2, 5, 0, 0], [1, 0, 0, 0]],
+                    [[2, 3, 0, 0], [1, 0, 0, 0]],
                 ]
             ),
             torch.tensor(
                 [
                     [[1, 1, 1, 1], [1, 1, 0, 0]],
-                    [[1, 1, 0, 0], [0, 0, 0, 0]],
-                    [[1, 1, 0, 0], [0, 0, 0, 0]],
+                    [[1, 1, 0, 0], [1, 0, 0, 0]],
+                    [[1, 1, 0, 0], [1, 0, 0, 0]],
+                ],
+                dtype=torch.float,
+            ),
+            torch.tensor(
+                [
+                    [1, 1],
+                    [1, 0],
+                    [1, 0],
                 ],
                 dtype=torch.float,
             ),
@@ -89,13 +99,16 @@ def test_agent_preprocess_action_cands(
     batch_action_cands,
     expected_action_cand_word_ids,
     expected_action_cand_mask,
+    expected_action_mask,
 ):
     (
         action_cand_word_ids,
         action_cand_mask,
+        action_mask,
     ) = agent_simple_words.preprocess_action_cands(batch_action_cands)
     assert action_cand_word_ids.equal(expected_action_cand_word_ids)
     assert action_cand_mask.equal(expected_action_cand_mask)
+    assert action_mask.equal(expected_action_mask)
 
 
 @pytest.mark.parametrize(

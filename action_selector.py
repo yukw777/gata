@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 
-from typing import Tuple
 from layers import TextEncoder, GraphEncoder, ReprAggregator, EncoderMixin
 from utils import masked_mean
 
@@ -25,24 +24,24 @@ class ActionScorer(nn.Module):
         self,
         enc_action_cands: torch.Tensor,
         action_cand_mask: torch.Tensor,
+        action_mask: torch.Tensor,
         h_og: torch.Tensor,
         h_go: torch.Tensor,
         obs_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> torch.Tensor:
         """
         enc_action_cands: encoded action candidates produced by TextEncoder.
             (batch, num_action_cands, action_cand_len, hidden_dim)
         action_cand_mask: mask for encoded action candidates.
             (batch, num_action_cands, action_cand_len)
+        action_mask: mask for action candidates. (batch, num_action_cands)
         h_og: aggregated representation of the observation with the current graph.
             (batch, obs_len, hidden_dim)
         h_go: aggregated node representation of the current graph with the observation.
             (batch, num_node, hidden_dim)
         obs_mask: mask for the observations. (batch, obs_len)
 
-        output:
-            action scores of shape (batch, num_action_cands)
-            action mask of shape (batch, num_action_cands)
+        output: action scores of shape (batch, num_action_cands)
         """
         # get the action candidate representation
         # perform masked mean pooling over the action_cand_len dim
@@ -87,11 +86,6 @@ class ActionScorer(nn.Module):
         expanded_obs_repr = obs_repr.unsqueeze(1).expand(-1, num_action_cands, -1)
         # (batch, num_action_cands, hidden_dim)
 
-        # calculate the action mask by selecting any action candidate
-        # that had unmasked tokens
-        action_mask = action_cand_mask.bool().any(-1).float()
-        # (batch, num_action_cands)
-
         # concatenate them with encoded action candidates and
         # send them through the final linear layers
         output = torch.cat(
@@ -107,7 +101,7 @@ class ActionScorer(nn.Module):
         output *= action_mask
         # (batch, num_action_cands)
 
-        return output, action_mask
+        return output
 
 
 class ActionSelector(EncoderMixin, nn.Module):
@@ -196,17 +190,18 @@ class ActionSelector(EncoderMixin, nn.Module):
         current_graph: torch.Tensor,
         action_cand_word_ids: torch.Tensor,
         action_cand_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        action_mask: torch.Tensor,
+    ) -> torch.Tensor:
         """
         obs_word_ids: (batch, obs_len)
         obs_mask: (batch, obs_len)
         current_graph: (batch, num_relation, num_node, num_node)
         action_cand_word_ids: (batch, num_action_cands, action_cand_len)
         action_cand_mask: (batch, num_action_cands, action_cand_len)
+        action_mask: (batch, num_action_cands)
 
         output:
             action scores of shape (batch, num_action_cands)
-            action mask of shape (batch, num_action_cands)
         """
         # encode text observations
         encoded_obs = self.encode_text(obs_word_ids, obs_mask)
@@ -236,7 +231,7 @@ class ActionSelector(EncoderMixin, nn.Module):
         # (batch, num_action_cands, action_cand_len, hidden_dim)
 
         return self.action_scorer(
-            enc_action_cands, action_cand_mask, h_og, h_go, obs_mask
+            enc_action_cands, action_cand_mask, action_mask, h_og, h_go, obs_mask
         )
 
     @staticmethod

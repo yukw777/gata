@@ -61,6 +61,7 @@ class Agent:
         (
             action_cand_word_ids,
             action_cand_mask,
+            action_mask,
         ) = self.preprocess_action_cands(action_cands)
 
         # calculate the current graph
@@ -73,12 +74,13 @@ class Agent:
         )
 
         # based on the current graph, calculate the q values
-        action_scores, action_mask = self.action_selector(
+        action_scores = self.action_selector(
             obs_word_ids,
             obs_mask,
             graph_updater_results["g_t"],
             action_cand_word_ids,
             action_cand_mask,
+            action_mask,
         )
 
         return {
@@ -151,13 +153,14 @@ class Agent:
 
     def preprocess_action_cands(
         self, action_cands: List[List[str]]
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
         action_cands: filtered action candidates
 
         returns: (
             action_cand_word_ids of shape (batch, num_action_cands, action_cand_len)
             action_cand_mask of shape (batch, num_action_cands, action_cand_len)
+            action_mask of shape (batch, num_action_cands)
         )
         """
         device = self.get_device()
@@ -176,6 +179,7 @@ class Agent:
         # now pad by max_num_action_cands
         action_cand_word_ids_list: List[torch.Tensor] = []
         action_cand_mask_list: List[torch.Tensor] = []
+        action_mask_list: List[torch.Tensor] = []
         i = 0
         for cands in action_cands:
             unpadded_action_cand_word_ids = flat_action_cand_word_ids[
@@ -184,31 +188,38 @@ class Agent:
             unpadded_action_cand_mask = flat_action_cand_mask[i : i + len(cands)]
             pad_len = max_num_action_cands - len(cands)
             if pad_len > 0:
+                # we add an UNK even if the action candidate should be masked
+                # to prevent nan from multiheaded attention which happens due to a bug
+                # https://github.com/pytorch/pytorch/issues/41508
+                # this is OK since padded actions will never be chosen
+                # based on action_mask
+                pad = torch.tensor(
+                    [[self.preprocessor.unk_id] + [0] * (max_action_cand_len - 1)],
+                    device=device,
+                ).expand(pad_len, -1)
                 padded_action_cand_word_ids = torch.cat(
-                    [
-                        unpadded_action_cand_word_ids,
-                        torch.zeros(
-                            pad_len,
-                            max_action_cand_len,
-                            dtype=torch.long,
-                            device=device,
-                        ),
-                    ]
+                    [unpadded_action_cand_word_ids, pad]
                 )
-                padded_action_cand_mask = torch.cat(
-                    [
-                        unpadded_action_cand_mask,
-                        torch.zeros(pad_len, max_action_cand_len, device=device),
-                    ]
+                padded_action_cand_mask = torch.cat([unpadded_action_cand_mask, pad])
+                padded_action_mask = torch.tensor(
+                    [1] * len(cands) + [0] * pad_len,
+                    dtype=torch.float,
+                    device=device,
                 )
             else:
                 padded_action_cand_word_ids = unpadded_action_cand_word_ids
                 padded_action_cand_mask = unpadded_action_cand_mask
+                padded_action_mask = torch.ones(
+                    max_num_action_cands, dtype=torch.float, device=device
+                )
             action_cand_word_ids_list.append(padded_action_cand_word_ids)
             action_cand_mask_list.append(padded_action_cand_mask)
+            action_mask_list.append(padded_action_mask)
             i += len(cands)
-        return torch.stack(action_cand_word_ids_list), torch.stack(
-            action_cand_mask_list
+        return (
+            torch.stack(action_cand_word_ids_list),
+            torch.stack(action_cand_mask_list),
+            torch.stack(action_mask_list),
         )
 
 

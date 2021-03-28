@@ -160,24 +160,26 @@ def test_gata_double_dqn_forward(
     action_cand_len,
 ):
     gata_ddqn = GATADoubleDQN()
-    action_scores, action_mask = gata_ddqn(
-        torch.randint(gata_ddqn.num_words, (batch_size, obs_len)),
-        increasing_mask(batch_size, obs_len),
-        torch.rand(
-            batch_size,
-            gata_ddqn.num_relations,
-            gata_ddqn.num_nodes,
-            gata_ddqn.num_nodes,
-        ),
-        torch.randint(
-            gata_ddqn.num_words, (batch_size, num_action_cands, action_cand_len)
-        ),
-        increasing_mask(batch_size * num_action_cands, action_cand_len).view(
-            batch_size, num_action_cands, action_cand_len
-        ),
+    assert (
+        gata_ddqn(
+            torch.randint(gata_ddqn.num_words, (batch_size, obs_len)),
+            increasing_mask(batch_size, obs_len),
+            torch.rand(
+                batch_size,
+                gata_ddqn.num_relations,
+                gata_ddqn.num_nodes,
+                gata_ddqn.num_nodes,
+            ),
+            torch.randint(
+                gata_ddqn.num_words, (batch_size, num_action_cands, action_cand_len)
+            ),
+            increasing_mask(batch_size * num_action_cands, action_cand_len).view(
+                batch_size, num_action_cands, action_cand_len
+            ),
+            increasing_mask(batch_size, num_action_cands),
+        ).size()
+        == (batch_size, num_action_cands)
     )
-    assert action_scores.size() == (batch_size, num_action_cands)
-    assert action_mask.size() == (batch_size, num_action_cands)
 
 
 @pytest.mark.parametrize(
@@ -248,6 +250,9 @@ def test_gata_double_dqn_training_step(
                     (batch_size, num_action_cands, action_cand_len),
                     dtype=torch.float,
                 ),
+                "action_mask": torch.randint(
+                    2, (batch_size, num_action_cands), dtype=torch.float
+                ),
                 "actions_idx": torch.randint(num_action_cands, (batch_size,)),
                 "rewards": torch.rand(batch_size),
                 "next_obs_word_ids": torch.randint(4, (batch_size, obs_len)),
@@ -267,6 +272,9 @@ def test_gata_double_dqn_training_step(
                     2,
                     (batch_size, num_action_cands, action_cand_len),
                     dtype=torch.float,
+                ),
+                "next_action_mask": torch.randint(
+                    2, (batch_size, num_action_cands), dtype=torch.float
                 ),
             },
             0,
@@ -461,6 +469,7 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
     assert batch["action_cand_word_ids"].size() == (batch_size, 2, 2)
     assert batch["action_cand_mask"].size() == (batch_size, 2, 2)
+    assert batch["action_mask"].size() == (batch_size, 2)
     assert batch["actions_idx"].size() == (batch_size,)
     assert batch["rewards"].size() == (batch_size,)
     assert batch["next_obs_word_ids"].size() == (batch_size, 3)
@@ -468,6 +477,7 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
+    assert batch["next_action_mask"].size() == (batch_size, 2)
 
 
 def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
@@ -478,6 +488,8 @@ def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
         assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
         assert batch["action_cand_word_ids"].size(0) == batch_size
         assert batch["action_cand_mask"].size() == batch["action_cand_word_ids"].size()
+        assert batch["action_mask"].size(0) == batch_size
+        assert batch["action_mask"].size(1) == batch["action_cand_mask"].size(1)
         assert batch["actions_idx"].size() == (batch_size,)
         assert batch["rewards"].size() == (batch_size,)
         assert batch["next_obs_word_ids"].size(0) == batch_size
@@ -487,6 +499,10 @@ def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
         assert (
             batch["next_action_cand_mask"].size()
             == batch["next_action_cand_word_ids"].size()
+        )
+        assert batch["next_action_mask"].size(0) == batch_size
+        assert batch["next_action_mask"].size(1) == batch["next_action_cand_mask"].size(
+            1
         )
 
 

@@ -10,7 +10,7 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.loggers import WandbLogger
 from dataclasses import dataclass, field
-from typing import Optional, Tuple, Dict, List, Iterator, Deque, Callable, Iterable
+from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader
 from collections import deque
@@ -429,7 +429,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         current_graph: torch.Tensor,
         action_cand_word_ids: torch.Tensor,
         action_cand_mask: torch.Tensor,
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        action_mask: torch.Tensor,
+    ) -> torch.Tensor:
         """
         Use the online action selector to get the action scores based on the game state.
 
@@ -438,10 +439,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         current_graph: (batch, num_relation, num_node, num_node)
         action_cand_word_ids: (batch, num_action_cands, action_cand_len)
         action_cand_mask: (batch, num_action_cands, action_cand_len)
+        action_mask: (batch, num_action_cands)
 
-        output:
-            action scores of shape (batch, num_action_cands)
-            action mask of shape (batch, num_action_cands)
+        output: action scores of shape (batch, num_action_cands)
         """
         return self.action_selector(
             obs_word_ids,
@@ -449,6 +449,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             current_graph,
             action_cand_word_ids,
             action_cand_mask,
+            action_mask,
         )
 
     @staticmethod
@@ -478,38 +479,43 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # double deep q learning
 
         # calculate the current q values
-        action_scores, action_mask = self(
+        action_scores = self(
             batch["obs_word_ids"],
             batch["obs_mask"],
             batch["current_graph"],
             batch["action_cand_word_ids"],
             batch["action_cand_mask"],
+            batch["action_mask"],
         )
-        q_values = self.get_q_values(action_scores, action_mask, batch["actions_idx"])
+        q_values = self.get_q_values(
+            action_scores, batch["action_mask"], batch["actions_idx"]
+        )
 
         with torch.no_grad():
             # select the next actions with the best q values
-            next_action_scores, next_action_mask = self(
+            next_action_scores = self(
                 batch["next_obs_word_ids"],
                 batch["next_obs_mask"],
                 batch["next_graph"],
                 batch["next_action_cand_word_ids"],
                 batch["next_action_cand_mask"],
+                batch["next_action_mask"],
             )
             next_actions_idx = self.action_selector.select_max_q(
-                next_action_scores, next_action_mask
+                next_action_scores, batch["next_action_mask"]
             )
 
             # calculate the next q values using the target action selector
-            next_tgt_action_scores, next_tgt_action_mask = self.target_action_selector(
+            next_tgt_action_scores = self.target_action_selector(
                 batch["next_obs_word_ids"],
                 batch["next_obs_mask"],
                 batch["next_graph"],
                 batch["next_action_cand_word_ids"],
                 batch["next_action_cand_mask"],
+                batch["next_action_mask"],
             )
             next_q_values = self.get_q_values(
-                next_tgt_action_scores, next_tgt_action_mask, next_actions_idx
+                next_tgt_action_scores, batch["next_action_mask"], next_actions_idx
             )
         # TODO: loss calculation and updates for prioritized experience replay
         # Note: no need to mask the next Q values as "done" states are not even added
@@ -686,11 +692,13 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         (
             action_cand_word_ids,
             action_cand_mask,
+            action_mask,
         ) = self.agent.preprocess_action_cands(action_cands)
         next_obs_word_ids, next_obs_mask = self.agent.preprocessor.preprocess(next_obs)
         (
             next_action_cand_word_ids,
             next_action_cand_mask,
+            next_action_mask,
         ) = self.agent.preprocess_action_cands(next_action_cands)
 
         return {
@@ -699,6 +707,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "current_graph": torch.stack(curr_graphs),
             "action_cand_word_ids": action_cand_word_ids,
             "action_cand_mask": action_cand_mask,
+            "action_mask": action_mask,
             "actions_idx": torch.tensor(actions_idx),
             "rewards": torch.tensor(rewards),
             "next_obs_word_ids": next_obs_word_ids,
@@ -706,6 +715,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "next_graph": torch.stack(next_graphs),
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
+            "next_action_mask": next_action_mask,
         }
 
     def sample(self) -> Iterator[Transition]:
