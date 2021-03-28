@@ -21,6 +21,7 @@ from action_selector import ActionSelector
 from graph_updater import GraphUpdater
 from agent import EpsilonGreedyAgent
 from optimizers import RAdam
+from train_graph_updater import GraphUpdaterObsGen
 
 
 def request_infos_for_train() -> EnvInfos:
@@ -296,7 +297,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             else None,
         )
 
-        # main action selector
+        # online action selector
         self.action_selector = ActionSelector(
             hidden_dim,
             self.num_words,
@@ -317,6 +318,28 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             rel_name_word_ids,
             rel_name_mask,
         )
+        if pretrained_graph_updater is not None:
+            # load the pretrained graph encoder weights
+            action_selector_state_dict = self.action_selector.state_dict()
+
+            def is_graph_encoder_key(key: str) -> bool:
+                return any(
+                    key.startswith(graph_encoder_key)
+                    for graph_encoder_key in [
+                        "graph_encoder",
+                        "word_embeddings",
+                        "node_embeddings",
+                        "relation_embeddings",
+                    ]
+                )
+
+            pretrained_graph_encoder_state_dict = {
+                k: v
+                for k, v in pretrained_graph_updater.state_dict().items()
+                if is_graph_encoder_key(k)
+            }
+            action_selector_state_dict.update(pretrained_graph_encoder_state_dict)
+            self.action_selector.load_state_dict(action_selector_state_dict)
 
         # target action selector
         self.target_action_selector = ActionSelector(
@@ -342,7 +365,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # we don't train the target action selector
         for param in self.target_action_selector.parameters():
             param.requires_grad = False
-        # update the target action selector weights to those of the main action selector
+        # update the target action selector weights to those of
+        # the online action selector
         self.update_target_action_selector()
 
         # graph updater
@@ -407,7 +431,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         action_cand_mask: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Use the main action selector to get the action scores based on the game state.
+        Use the online action selector to get the action scores based on the game state.
 
         obs_word_ids: (batch, obs_len)
         obs_mask: (batch, obs_len)
@@ -709,7 +733,19 @@ def main(cfg: DictConfig) -> None:
     trainer = pl.Trainer(**trainer_config)
 
     # instantiate the lightning module
-    lm = GATADoubleDQN(**cfg.model, **cfg.train, **cfg.data)
+    lm_model_config = OmegaConf.to_container(cfg.model, resolve=True)
+    assert isinstance(lm_model_config, dict)
+    if cfg.model.pretrained_graph_updater is not None:
+        graph_updater_obs_gen = GraphUpdaterObsGen.load_from_checkpoint(
+            to_absolute_path(cfg.model.pretrained_graph_updater.ckpt_path),
+            word_vocab_path=cfg.model.pretrained_graph_updater.word_vocab_path,
+            node_vocab_path=cfg.model.pretrained_graph_updater.node_vocab_path,
+            relation_vocab_path=cfg.model.pretrained_graph_updater.relation_vocab_path,
+        )
+        lm_model_config[
+            "pretrained_graph_updater"
+        ] = graph_updater_obs_gen.graph_updater
+    lm = GATADoubleDQN(**lm_model_config, **cfg.train, **cfg.data)
 
     # fit
     trainer.fit(lm)

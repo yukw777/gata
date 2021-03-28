@@ -107,7 +107,7 @@ def test_gata_double_dqn_default_init():
         2,
     )
 
-    # main action selector is train mode
+    # online action selector is train mode
     assert gata_ddqn.action_selector.training
 
     # target action selector is in train mode
@@ -132,7 +132,7 @@ def test_gata_double_dqn_default_init():
 
 def test_gata_double_dqn_update_target_action_selector():
     gata_ddqn = GATADoubleDQN()
-    # scramble layers in the main action selector and update
+    # scramble layers in the online action selector and update
     gata_ddqn.action_selector.node_name_word_ids.fill_(42)
     gata_ddqn.action_selector.node_embeddings = nn.Embedding(
         gata_ddqn.num_nodes, gata_ddqn.hparams.node_emb_dim

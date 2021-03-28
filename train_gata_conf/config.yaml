@@ -14,7 +14,11 @@ model:
   word_vocab_path: vocabs/word_vocab.txt
   node_vocab_path: vocabs/node_vocab.txt
   relation_vocab_path: vocabs/relation_vocab.txt
-  pretrained_graph_updater: null
+  pretrained_graph_updater:
+    ckpt_path: pretrained/graph-updater-obs-gen.ckpt
+    word_vocab_path: vocabs/word_vocab.txt
+    node_vocab_path: vocabs/node_vocab.txt
+    relation_vocab_path: vocabs/relation_vocab.txt
   hidden_dim: 64
   word_emb_dim: 300
   node_emb_dim: 100
