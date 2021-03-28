@@ -4,6 +4,7 @@ import torch.nn as nn
 import random
 
 from collections import deque
+from hydra.experimental import initialize, compose
 
 from train_gata import (
     request_infos_for_train,
@@ -12,6 +13,7 @@ from train_gata import (
     GATADoubleDQN,
     TransitionCache,
     Transition,
+    main,
 )
 from agent import EpsilonGreedyAgent
 from preprocessor import PAD, UNK, BOS, EOS
@@ -116,12 +118,12 @@ def test_gata_double_dqn_default_init():
     for param in gata_ddqn.target_action_selector.parameters():
         assert param.requires_grad is False
 
-    # main and target action selectors should be initialized to be the same
-    for main, target in zip(
+    # online and target action selectors should be initialized to be the same
+    for online, target in zip(
         gata_ddqn.action_selector.parameters(),
         gata_ddqn.target_action_selector.parameters(),
     ):
-        assert main.equal(target)
+        assert online.equal(target)
 
     # graph updater is in eval mode
     assert not gata_ddqn.graph_updater.training
@@ -140,11 +142,11 @@ def test_gata_double_dqn_update_target_action_selector():
 
     # make sure the weights are the same after updating
     gata_ddqn.update_target_action_selector()
-    for main, target in zip(
+    for online, target in zip(
         gata_ddqn.action_selector.parameters(),
         gata_ddqn.target_action_selector.parameters(),
     ):
-        assert main.equal(target)
+        assert online.equal(target)
 
 
 @pytest.mark.parametrize(
@@ -486,3 +488,22 @@ def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
             batch["next_action_cand_mask"].size()
             == batch["next_action_cand_word_ids"].size()
         )
+
+
+def test_main(tmp_path):
+    with initialize(config_path="train_gata_conf"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "data.train_data_size=1",
+                "data.max_episodes=10",
+                "data.train_game_batch_size=3",
+                "data.train_max_episode_steps=5",
+                "data.train_sample_batch_size=4",
+                "train.episodes_before_learning=3",
+                "train.training_step_freq=4",
+                "train.target_net_update_frequency=3",
+                "+pl_trainer.max_epochs=2",
+            ],
+        )
+        main(cfg)
