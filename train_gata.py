@@ -746,6 +746,7 @@ def main(cfg: DictConfig) -> None:
             "pretrained_graph_updater"
         ] = graph_updater_obs_gen.graph_updater
     lm = GATADoubleDQN(**lm_model_config, **cfg.train, **cfg.data)
+    lm.seed_envs(42)
 
     # fit
     trainer.fit(lm)
