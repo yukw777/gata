@@ -6,6 +6,7 @@ data:
   train_max_episode_steps: 50
   train_game_batch_size: 25
   replay_buffer_capacity: 500000
+  replay_buffer_populate_episodes: 100
   train_sample_batch_size: 64
   eval_max_episode_steps: 100
   eval_game_batch_size: 20
@@ -32,7 +33,6 @@ model:
   action_scorer_num_heads: 1
 
 train:
-  episodes_before_learning: 100
   training_step_freq: 50
   replay_buffer_reward_threshold: 0.1
   target_net_update_frequency: 500

@@ -386,7 +386,7 @@ def replay_buffer_gata_double_dqn():
         max_episodes=30,
         train_game_batch_size=2,
         train_max_episode_steps=5,
-        episodes_before_learning=10,
+        replay_buffer_populate_episodes=10,
         yield_step_freq=10,
         replay_buffer_capacity=20,
         train_sample_batch_size=4,
@@ -480,7 +480,7 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     assert batch["next_action_mask"].size() == (batch_size, 2)
 
 
-def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
+def test_gata_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
     batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
     for batch in replay_buffer_gata_double_dqn.train_dataloader():
         assert batch["obs_word_ids"].size(0) == batch_size
@@ -506,6 +506,12 @@ def test_get_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
         )
 
 
+def test_gata_double_dqn_populate_replay_buffer(replay_buffer_gata_double_dqn):
+    assert len(replay_buffer_gata_double_dqn.buffer) == 0
+    replay_buffer_gata_double_dqn.populate_replay_buffer()
+    assert len(replay_buffer_gata_double_dqn.buffer) > 0
+
+
 def test_main(tmp_path):
     with initialize(config_path="train_gata_conf"):
         cfg = compose(
@@ -516,7 +522,7 @@ def test_main(tmp_path):
                 "data.train_game_batch_size=3",
                 "data.train_max_episode_steps=5",
                 "data.train_sample_batch_size=4",
-                "train.episodes_before_learning=3",
+                "data.replay_buffer_populate_episodes=3",
                 "train.training_step_freq=4",
                 "train.target_net_update_frequency=3",
                 "+pl_trainer.max_epochs=2",

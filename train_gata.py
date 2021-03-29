@@ -178,9 +178,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         max_episodes: int = 100000,
         train_max_episode_steps: int = 50,
         train_game_batch_size: int = 25,
-        episodes_before_learning: int = 100,
         training_step_freq: int = 50,
         replay_buffer_capacity: int = 500000,
+        replay_buffer_populate_episodes: int = 100,
         replay_buffer_reward_threshold: float = 0.1,
         train_sample_batch_size: int = 64,
         learning_rate: float = 1e-3,
@@ -215,9 +215,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "max_episodes",
             "train_max_episode_steps",
             "train_game_batch_size",
-            "episodes_before_learning",
             "training_step_freq",
             "replay_buffer_capacity",
+            "replay_buffer_populate_episodes",
             "replay_buffer_reward_threshold",
             "train_sample_batch_size",
             "learning_rate",
@@ -527,6 +527,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
     def train_dataloader(self) -> DataLoader:
+        self.populate_replay_buffer()
         return DataLoader(
             ReplayBufferDataset(self.gen_train_batch),
             batch_size=self.hparams.train_sample_batch_size,  # type: ignore
@@ -535,6 +536,78 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def configure_optimizers(self):
         return RAdam(self.parameters(), lr=self.hparams.learning_rate)
+
+    def populate_replay_buffer(self) -> None:
+        episodes_played = 0
+        while (
+            episodes_played
+            < self.hparams.replay_buffer_populate_episodes  # type: ignore
+        ):
+            transition_cache = TransitionCache(self.train_env.batch_size)
+            rnn_prev_hidden: Optional[torch.Tensor] = None
+            prev_actions: Optional[List[str]] = None
+            prev_obs: List[str] = []
+            prev_action_cands: List[List[str]] = []
+            prev_graph: torch.Tensor = torch.empty(0)
+            prev_actions_idx: List[int] = []
+            prev_rewards: List[float] = []
+            prev_dones: List[bool] = [False] * self.train_env.batch_size
+
+            raw_obs, infos = self.train_env.reset()
+            for step in itertools.count():
+                if all(prev_dones):
+                    # if all the previous episodes are done, we can stop
+                    break
+
+                # clean observations
+                obs = self.agent.preprocessor.batch_clean(raw_obs)
+
+                # filter action cands
+                action_cands = self.agent.filter_action_cands(
+                    infos["admissible_commands"]
+                )
+                results = self.agent.calculate_action_scores(
+                    obs,
+                    action_cands,
+                    prev_actions=prev_actions,
+                    rnn_prev_hidden=rnn_prev_hidden,
+                )
+                curr_graph = results["curr_graph"].cpu()
+
+                # if we took a step before, add a transition
+                if prev_actions is not None:
+                    # add the previous transition to the cache
+                    transition_cache.batch_add(
+                        prev_obs,
+                        prev_action_cands,
+                        prev_graph,
+                        prev_actions_idx,
+                        prev_rewards,
+                        prev_dones,
+                        obs,
+                        action_cands,
+                        curr_graph,
+                    )
+                # select actions randomly
+                actions_idx = self.agent.select_random(results["action_mask"]).tolist()
+
+                # take a step
+                prev_actions = self.agent.decode_actions(action_cands, actions_idx)
+                raw_obs, rewards, dones, infos = self.train_env.step(prev_actions)
+
+                # set up the next step
+                # first save the previous state
+                prev_obs = obs
+                prev_action_cands = action_cands
+                prev_graph = curr_graph
+                prev_actions_idx = actions_idx
+                prev_rewards = rewards
+                prev_dones = dones
+                rnn_prev_hidden = results["rnn_curr_hidden"]
+
+            # push transitions into the buffer
+            self.push_to_buffer(transition_cache)
+            episodes_played += self.train_env.batch_size
 
     def gen_train_batch(self) -> Iterator[Transition]:
         episodes_played = 0
@@ -557,9 +630,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             for step in itertools.count():
                 # Check if we should yield a sample
                 if (
-                    episodes_played
-                    >= self.hparams.episodes_before_learning  # type: ignore
-                    and total_episode_steps
+                    total_episode_steps
                     % self.hparams.training_step_freq  # type: ignore
                     == 0
                 ):
@@ -601,24 +672,14 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                         curr_graph,
                     )
 
-                # now pick an action
-                if (
-                    episodes_played
-                    < self.hparams.episodes_before_learning  # type: ignore
-                ):
-                    # select actions randomly
-                    actions_idx = self.agent.select_random(
-                        results["action_mask"]
-                    ).tolist()
-                else:
-                    # select actions based on the epsilon greedy strategy
-                    actions_idx = self.agent.select_epsilon_greedy(
-                        self.agent.action_selector.select_max_q(
-                            results["action_scores"], results["action_mask"]
-                        ),
-                        self.agent.select_random(results["action_mask"]),
-                    ).tolist()
-                    # (batch)
+                # select actions based on the epsilon greedy strategy
+                actions_idx = self.agent.select_epsilon_greedy(
+                    self.agent.action_selector.select_max_q(
+                        results["action_scores"], results["action_mask"]
+                    ),
+                    self.agent.select_random(results["action_mask"]),
+                ).tolist()
+                # (batch)
 
                 # take a step
                 prev_actions = self.agent.decode_actions(action_cands, actions_idx)
@@ -647,11 +708,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 % self.hparams.target_net_update_frequency  # type: ignore
             ):
                 self.update_target_action_selector()
-            if episodes_played >= self.hparams.episodes_before_learning:  # type: ignore
-                self.agent.update_epsilon(
-                    episodes_played
-                    - self.hparams.episodes_before_learning  # type: ignore
-                )
+            self.agent.update_epsilon(episodes_played)
             episodes_played += self.train_env.batch_size
 
     def push_to_buffer(self, t_cache: TransitionCache) -> None:
