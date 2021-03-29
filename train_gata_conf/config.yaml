@@ -2,7 +2,6 @@ data:
   base_data_dir: "data/rl.0.2"
   difficulty_level: 1
   train_data_size: 20
-  max_episodes: 100000
   train_max_episode_steps: 50
   train_game_batch_size: 25
   replay_buffer_capacity: 500000
