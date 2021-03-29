@@ -42,3 +42,4 @@ pl_trainer:
 
 defaults:
   - logger: null
+  - data: null
