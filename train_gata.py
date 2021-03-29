@@ -76,9 +76,9 @@ class Transition:
     # chosen action ID
     action_id: int = 0
     # cumulative reward after the action
-    cum_reward: float = 0.0
+    cum_reward: int = 0
     # step reward after the action
-    step_reward: float = 0.0
+    step_reward: int = 0
     # next observation
     next_ob: str = ""
     # next action candidates
@@ -165,6 +165,12 @@ class TransitionCache:
                     done=done,
                 )
             )
+
+    def get_game_rewards(self) -> List[int]:
+        return [episode[-1].cum_reward for episode in self.cache]
+
+    def get_game_steps(self) -> List[int]:
+        return [len(episode) for episode in self.cache]
 
     def get_avg_rewards(self) -> List[float]:
         """
@@ -429,6 +435,11 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # bookkeeping
         self.total_episode_steps = 0
 
+        # metrics
+        self.game_rewards: List[int] = []
+        self.game_normalized_rewards: List[float] = []
+        self.game_steps: List[int] = []
+
     def seed_envs(self, seed: int) -> None:
         self.train_env.seed(seed)
         self.val_env.seed(seed)
@@ -535,10 +546,27 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # TODO: loss calculation and updates for prioritized experience replay
         # Note: no need to mask the next Q values as "done" states are not even added
         # to the replay buffer
-        return self.smooth_l1_loss(
+        loss = self.smooth_l1_loss(
             q_values,
             batch["rewards"]
             + next_q_values * self.hparams.reward_discount,  # type: ignore
+        )
+        self.log("train_loss", loss, on_step=False, on_epoch=True)
+        return loss
+
+    def training_epoch_end(self, _) -> None:
+        self.log_dict(
+            {
+                "train_avg_game_rewards": torch.tensor(
+                    self.game_rewards, dtype=torch.float
+                ).mean(),
+                "train_avg_game_normalized_rewards": torch.tensor(
+                    self.game_normalized_rewards
+                ).mean(),
+                "train_avg_game_steps": torch.tensor(
+                    self.game_steps, dtype=torch.float
+                ).mean(),
+            }
         )
 
     def train_dataloader(self) -> DataLoader:
@@ -696,6 +724,14 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
         # push transitions into the buffer
         self.push_to_buffer(transition_cache)
+
+        # collect metrics
+        self.game_rewards = transition_cache.get_game_rewards()
+        self.game_normalized_rewards = [
+            reward / game.metadata["max_score"]
+            for reward, game in zip(self.game_rewards, infos["game"])
+        ]
+        self.game_steps = transition_cache.get_game_steps()
 
     def push_to_buffer(self, t_cache: TransitionCache) -> None:
         buffer_avg_reward = 0.0

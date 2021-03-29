@@ -360,14 +360,14 @@ def test_transition_cache_batch_add():
     [
         (
             [
-                [1.0, 3.0, 3.0, 4.0],
+                [1, 3, 3, 4],
             ],
-            [1.0],
+            [1],
         ),
         (
             [
-                [1.0, 3.0, 3.0, 4.0],
-                [1.0, 3.0, 3.0, 4.0, 6.0],
+                [1, 3, 3, 4],
+                [1, 3, 3, 4, 6],
             ],
             [1.0, 1.2],
         ),
@@ -380,6 +380,42 @@ def test_transition_cache_get_avg_rewards(batch_cum_rewards, batch_expected):
             t_cache.cache[i].append(Transition(cum_reward=cum_reward))
     for avg, expected in zip(t_cache.get_avg_rewards(), batch_expected):
         assert pytest.approx(avg) == expected
+
+
+@pytest.mark.parametrize(
+    "batch_cum_rewards,batch_expected",
+    [
+        (
+            [
+                [1, 3, 3, 4],
+            ],
+            [4],
+        ),
+        (
+            [
+                [1, 3, 3, 4],
+                [1, 3, 3, 4, 6],
+            ],
+            [4, 6],
+        ),
+    ],
+)
+def test_transition_cache_get_rewards(batch_cum_rewards, batch_expected):
+    t_cache = TransitionCache(len(batch_cum_rewards))
+    for i, cum_rewards in enumerate(batch_cum_rewards):
+        for cum_reward in cum_rewards:
+            t_cache.cache[i].append(Transition(cum_reward=cum_reward))
+    for rewards, expected in zip(t_cache.get_game_rewards(), batch_expected):
+        assert rewards == expected
+
+
+@pytest.mark.parametrize("expected_steps", [[1], [2, 3, 1, 5]])
+def test_transition_cache_get_game_steps(expected_steps):
+    t_cache = TransitionCache(len(expected_steps))
+    for i, steps in enumerate(expected_steps):
+        t_cache.cache[i].extend([Transition()] * steps)
+    for steps, expected in zip(t_cache.get_game_steps(), expected_steps):
+        assert steps == expected
 
 
 @pytest.fixture
@@ -412,21 +448,21 @@ def replay_buffer_gata_double_dqn():
     [
         (
             deque(),
-            [[Transition(cum_reward=1.0)], [Transition(cum_reward=1.0)]],
-            deque([Transition(cum_reward=1.0), Transition(cum_reward=1.0)]),
+            [[Transition(cum_reward=1)], [Transition(cum_reward=1)]],
+            deque([Transition(cum_reward=1), Transition(cum_reward=1)]),
         ),
         (
-            deque([Transition(step_reward=1.0), Transition(step_reward=1.0)]),
+            deque([Transition(step_reward=2), Transition(step_reward=1)]),
             [
-                [Transition(cum_reward=2.0), Transition(cum_reward=3.0)],
-                [Transition(cum_reward=0.05)],
+                [Transition(cum_reward=2), Transition(cum_reward=3)],
+                [Transition(cum_reward=0)],
             ],
             deque(
                 [
-                    Transition(step_reward=1.0),
-                    Transition(step_reward=1.0),
-                    Transition(cum_reward=2.0),
-                    Transition(cum_reward=3.0),
+                    Transition(step_reward=2),
+                    Transition(step_reward=1),
+                    Transition(cum_reward=2),
+                    Transition(cum_reward=3),
                 ]
             ),
         ),
