@@ -383,7 +383,6 @@ def eps_greedy_agent():
 @pytest.fixture
 def replay_buffer_gata_double_dqn():
     return GATADoubleDQN(
-        max_episodes=30,
         train_game_batch_size=2,
         train_max_episode_steps=5,
         replay_buffer_populate_episodes=10,
@@ -518,14 +517,13 @@ def test_main(tmp_path):
             config_name="config",
             overrides=[
                 "data.train_data_size=1",
-                "data.max_episodes=10",
                 "data.train_game_batch_size=3",
                 "data.train_max_episode_steps=5",
                 "data.train_sample_batch_size=4",
                 "data.replay_buffer_populate_episodes=3",
                 "train.training_step_freq=4",
                 "train.target_net_update_frequency=3",
-                "+pl_trainer.max_epochs=2",
+                "pl_trainer.max_epochs=7",
             ],
         )
         main(cfg)

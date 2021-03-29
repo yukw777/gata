@@ -38,6 +38,7 @@ train:
   target_net_update_frequency: 500
 
 pl_trainer:
+  max_epochs: 4000  # max_episodes/train_game_batch_size = 100000/25
   gradient_clip_val: 5
 
 defaults:

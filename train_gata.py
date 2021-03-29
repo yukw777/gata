@@ -3,7 +3,6 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 import numpy as np
-import itertools
 import hydra
 
 from omegaconf import DictConfig, OmegaConf
@@ -175,7 +174,6 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         base_data_dir: Optional[str] = None,
         difficulty_level: int = 1,
         train_data_size: int = 1,
-        max_episodes: int = 100000,
         train_max_episode_steps: int = 50,
         train_game_batch_size: int = 25,
         training_step_freq: int = 50,
@@ -212,7 +210,6 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         self.save_hyperparameters(
             "difficulty_level",
             "train_data_size",
-            "max_episodes",
             "train_max_episode_steps",
             "train_game_batch_size",
             "training_step_freq",
@@ -414,6 +411,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # replay buffer
         self.buffer: Deque[Transition] = deque(maxlen=replay_buffer_capacity)
 
+        # bookkeeping
+        self.total_episode_steps = 0
+
     def seed_envs(self, seed: int) -> None:
         self.train_env.seed(seed)
         self.val_env.seed(seed)
@@ -554,7 +554,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             prev_dones: List[bool] = [False] * self.train_env.batch_size
 
             raw_obs, infos = self.train_env.reset()
-            for step in itertools.count():
+            while True:
                 if all(prev_dones):
                     # if all the previous episodes are done, we can stop
                     break
@@ -610,106 +610,103 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             episodes_played += self.train_env.batch_size
 
     def gen_train_batch(self) -> Iterator[Transition]:
-        episodes_played = 0
-        total_episode_steps = 0
-        while episodes_played < self.hparams.max_episodes:  # type: ignore
-            transition_cache = TransitionCache(self.train_env.batch_size)
-            rnn_prev_hidden: Optional[torch.Tensor] = None
-            prev_actions: Optional[List[str]] = None
-            prev_obs: List[str] = []
-            prev_action_cands: List[List[str]] = []
-            prev_graph: torch.Tensor = torch.empty(0)
-            prev_actions_idx: List[int] = []
-            prev_rewards: List[float] = []
-            prev_dones: List[bool] = [False] * self.train_env.batch_size
+        """
+        Generate train batches by playing multiple episodes in parallel.
+        Generation stops when all the parallel episodes are done.
+        The number of parallel episodes is self.train_env.batch_size.
+        This means that one epoch = self.train_env.batch_size episodes
+        """
+        transition_cache = TransitionCache(self.train_env.batch_size)
+        rnn_prev_hidden: Optional[torch.Tensor] = None
+        prev_actions: Optional[List[str]] = None
+        prev_obs: List[str] = []
+        prev_action_cands: List[List[str]] = []
+        prev_graph: torch.Tensor = torch.empty(0)
+        prev_actions_idx: List[int] = []
+        prev_rewards: List[float] = []
+        prev_dones: List[bool] = [False] * self.train_env.batch_size
 
-            # Play a batch of episodes.
-            # In order to ensure that all of the transitions have the next state
-            # so we collect transitions one step shifted.
-            raw_obs, infos = self.train_env.reset()
-            for step in itertools.count():
-                # Check if we should yield a sample
-                if (
-                    total_episode_steps
-                    % self.hparams.training_step_freq  # type: ignore
-                    == 0
-                ):
-                    # if we've played enough episodes to learn and we're at the
-                    # yield frequency, yield a batch
-                    yield from self.sample()
+        # Play a batch of episodes.
+        # In order to ensure that all of the transitions have the next state
+        # so we collect transitions one step shifted.
+        episodes_played = self.current_epoch * self.train_env.batch_size
+        raw_obs, infos = self.train_env.reset()
+        while True:
+            # Check if we should yield a sample
+            if (
+                self.total_episode_steps
+                % self.hparams.training_step_freq  # type: ignore
+                == 0
+            ):
+                # if we've played enough episodes to learn and we're at the
+                # yield frequency, yield a batch
+                yield from self.sample()
 
-                if all(prev_dones):
-                    # if all the previous episodes are done, we can stop
-                    break
+            if all(prev_dones):
+                # if all the previous episodes are done, we can stop
+                break
 
-                # now take a step
-                # clean observations
-                obs = self.agent.preprocessor.batch_clean(raw_obs)
+            # now take a step
+            # clean observations
+            obs = self.agent.preprocessor.batch_clean(raw_obs)
 
-                # filter action cands
-                action_cands = self.agent.filter_action_cands(
-                    infos["admissible_commands"]
-                )
-                results = self.agent.calculate_action_scores(
+            # filter action cands
+            action_cands = self.agent.filter_action_cands(infos["admissible_commands"])
+            results = self.agent.calculate_action_scores(
+                obs,
+                action_cands,
+                prev_actions=prev_actions,
+                rnn_prev_hidden=rnn_prev_hidden,
+            )
+            curr_graph = results["curr_graph"].cpu()
+            # if we took a step before, add a transition
+            if prev_actions is not None:
+                # add the previous transition to the cache
+                transition_cache.batch_add(
+                    prev_obs,
+                    prev_action_cands,
+                    prev_graph,
+                    prev_actions_idx,
+                    prev_rewards,
+                    prev_dones,
                     obs,
                     action_cands,
-                    prev_actions=prev_actions,
-                    rnn_prev_hidden=rnn_prev_hidden,
+                    curr_graph,
                 )
-                curr_graph = results["curr_graph"].cpu()
-                # if we took a step before, add a transition
-                if prev_actions is not None:
-                    # add the previous transition to the cache
-                    transition_cache.batch_add(
-                        prev_obs,
-                        prev_action_cands,
-                        prev_graph,
-                        prev_actions_idx,
-                        prev_rewards,
-                        prev_dones,
-                        obs,
-                        action_cands,
-                        curr_graph,
-                    )
 
-                # select actions based on the epsilon greedy strategy
-                actions_idx = self.agent.select_epsilon_greedy(
-                    self.agent.action_selector.select_max_q(
-                        results["action_scores"], results["action_mask"]
-                    ),
-                    self.agent.select_random(results["action_mask"]),
-                ).tolist()
-                # (batch)
+            # select actions based on the epsilon greedy strategy
+            actions_idx = self.agent.select_epsilon_greedy(
+                self.agent.action_selector.select_max_q(
+                    results["action_scores"], results["action_mask"]
+                ),
+                self.agent.select_random(results["action_mask"]),
+            ).tolist()
+            # (batch)
 
-                # take a step
-                prev_actions = self.agent.decode_actions(action_cands, actions_idx)
-                raw_obs, rewards, dones, infos = self.train_env.step(prev_actions)
+            # take a step
+            prev_actions = self.agent.decode_actions(action_cands, actions_idx)
+            raw_obs, rewards, dones, infos = self.train_env.step(prev_actions)
 
-                # set up the next step
-                # first save the previous state
-                prev_obs = obs
-                prev_action_cands = action_cands
-                prev_graph = curr_graph
-                prev_actions_idx = actions_idx
-                prev_rewards = rewards
-                prev_dones = dones
-                rnn_prev_hidden = results["rnn_curr_hidden"]
-                total_episode_steps += 1
-            # push transitions into the buffer
-            self.push_to_buffer(transition_cache)
+            # set up the next step
+            # first save the previous state
+            prev_obs = obs
+            prev_action_cands = action_cands
+            prev_graph = curr_graph
+            prev_actions_idx = actions_idx
+            prev_rewards = rewards
+            prev_dones = dones
+            rnn_prev_hidden = results["rnn_curr_hidden"]
+            self.total_episode_steps += 1
+        # push transitions into the buffer
+        self.push_to_buffer(transition_cache)
 
-            # set up for the next batch of episodes
-            # episodes_played increments by self.train_env.batch_size
-            # so we have to compare these to mods
-            if (
-                (episodes_played + self.train_env.batch_size)
-                % self.hparams.target_net_update_frequency  # type: ignore
-                <= episodes_played
-                % self.hparams.target_net_update_frequency  # type: ignore
-            ):
-                self.update_target_action_selector()
-            self.agent.update_epsilon(episodes_played)
-            episodes_played += self.train_env.batch_size
+        # set up for the next batch of episodes
+        if (
+            self.current_epoch
+            % self.hparams.target_net_update_frequency  # type: ignore
+        ):
+            self.update_target_action_selector()
+        self.agent.update_epsilon(episodes_played)
 
     def push_to_buffer(self, t_cache: TransitionCache) -> None:
         buffer_avg_reward = 0.0
