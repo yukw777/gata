@@ -299,7 +299,8 @@ def test_transition_cache_batch_add():
             ],
             "current_graphs": torch.rand(3, 6, 4, 4),
             "actions_idx": [random.randint(0, 2) for _ in range(3)],
-            "rewards": [random.random() for _ in range(3)],
+            "cum_rewards": [random.random() for _ in range(3)],
+            "step_rewards": [random.random() for _ in range(3)],
             "dones": dones,
             "next_obs": [f"{i}: step {step} next obs" for i in range(3)],
             "batch_next_action_cands": [
@@ -318,7 +319,8 @@ def test_transition_cache_batch_add():
         assert transition.action_cands == batch["batch_action_cands"][batch_num]
         assert transition.current_graph.equal(batch["current_graphs"][batch_num])
         assert transition.action_id == batch["actions_idx"][batch_num]
-        assert transition.reward == batch["rewards"][batch_num]
+        assert transition.cum_reward == batch["cum_rewards"][batch_num]
+        assert transition.step_reward == batch["step_rewards"][batch_num]
         assert transition.done == batch["dones"][batch_num]
         assert transition.next_ob == batch["next_obs"][batch_num]
         assert (
@@ -353,17 +355,30 @@ def test_transition_cache_batch_add():
             compare_batch_transition(batch_2, i, t_cache.cache[i][-1])
 
 
-@pytest.mark.parametrize("step_size", [1, 3, 5])
-@pytest.mark.parametrize("batch_size", [1, 3, 5])
-def test_transition_cache_get_avg_rewards(batch_size, step_size):
-    t_cache = TransitionCache(batch_size)
-    batch_rewards = torch.rand(batch_size, step_size)
-    for i, rewards in enumerate(batch_rewards.tolist()):
-        for reward in rewards:
-            t_cache.cache[i].append(Transition(reward=reward))
-    for avg, expected in zip(
-        t_cache.get_avg_rewards(), batch_rewards.mean(dim=1).tolist()
-    ):
+@pytest.mark.parametrize(
+    "batch_cum_rewards,batch_expected",
+    [
+        (
+            [
+                [1.0, 3.0, 3.0, 4.0],
+            ],
+            [1.0],
+        ),
+        (
+            [
+                [1.0, 3.0, 3.0, 4.0],
+                [1.0, 3.0, 3.0, 4.0, 6.0],
+            ],
+            [1.0, 1.2],
+        ),
+    ],
+)
+def test_transition_cache_get_avg_rewards(batch_cum_rewards, batch_expected):
+    t_cache = TransitionCache(len(batch_cum_rewards))
+    for i, cum_rewards in enumerate(batch_cum_rewards):
+        for cum_reward in cum_rewards:
+            t_cache.cache[i].append(Transition(cum_reward=cum_reward))
+    for avg, expected in zip(t_cache.get_avg_rewards(), batch_expected):
         assert pytest.approx(avg) == expected
 
 
@@ -397,21 +412,21 @@ def replay_buffer_gata_double_dqn():
     [
         (
             deque(),
-            [[Transition(reward=1.0)], [Transition(reward=1.0)]],
-            deque([Transition(reward=1.0), Transition(reward=1.0)]),
+            [[Transition(cum_reward=1.0)], [Transition(cum_reward=1.0)]],
+            deque([Transition(cum_reward=1.0), Transition(cum_reward=1.0)]),
         ),
         (
-            deque([Transition(reward=1.0), Transition(reward=0.5)]),
+            deque([Transition(step_reward=1.0), Transition(step_reward=1.0)]),
             [
-                [Transition(reward=2.0), Transition(reward=1.0)],
-                [Transition(reward=0.05)],
+                [Transition(cum_reward=2.0), Transition(cum_reward=3.0)],
+                [Transition(cum_reward=0.05)],
             ],
             deque(
                 [
-                    Transition(reward=1.0),
-                    Transition(reward=0.5),
-                    Transition(reward=1.0),
-                    Transition(reward=0.5),
+                    Transition(step_reward=1.0),
+                    Transition(step_reward=1.0),
+                    Transition(cum_reward=2.0),
+                    Transition(cum_reward=3.0),
                 ]
             ),
         ),
@@ -435,7 +450,8 @@ def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
                 action_cands=[f"{i} a1", f"{i} a2"],
                 current_graph=torch.rand(2, 1, 1),
                 action_id=random.randint(0, 1),
-                reward=random.random(),
+                cum_reward=random.random(),
+                step_reward=random.random(),
                 next_ob=f"{i} next o",
                 next_action_cands=[f"{i} next a1", f"{i} next a2"],
                 next_graph=torch.rand(2, 1, 1),
@@ -454,7 +470,8 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
             action_cands=[f"{i} a1", f"{i} a2"],
             current_graph=torch.rand(2, 1, 1),
             action_id=random.randint(0, 1),
-            reward=random.random(),
+            cum_reward=random.random(),
+            step_reward=random.random(),
             next_ob=f"{i} next o",
             next_action_cands=[f"{i} next a1", f"{i} next a2"],
             next_graph=torch.rand(2, 1, 1),
@@ -465,15 +482,17 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     batch = replay_buffer_gata_double_dqn.prepare_batch(transitions)
     assert batch["obs_word_ids"].size() == (batch_size, 2)
     assert batch["obs_mask"].size() == (batch_size, 2)
-    assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
+    assert batch["current_graph"].equal(
+        torch.stack([t.current_graph for t in transitions])
+    )
     assert batch["action_cand_word_ids"].size() == (batch_size, 2, 2)
     assert batch["action_cand_mask"].size() == (batch_size, 2, 2)
     assert batch["action_mask"].size() == (batch_size, 2)
-    assert batch["actions_idx"].size() == (batch_size,)
-    assert batch["rewards"].size() == (batch_size,)
+    assert batch["actions_idx"].equal(torch.tensor([t.action_id for t in transitions]))
+    assert batch["rewards"].equal(torch.tensor([t.step_reward for t in transitions]))
     assert batch["next_obs_word_ids"].size() == (batch_size, 3)
     assert batch["next_obs_mask"].size() == (batch_size, 3)
-    assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
+    assert batch["next_graph"].equal(torch.stack([t.next_graph for t in transitions]))
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
     assert batch["next_action_mask"].size() == (batch_size, 2)

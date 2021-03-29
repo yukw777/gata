@@ -9,7 +9,7 @@ from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.loggers import WandbLogger
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable
+from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable, Generator
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader
 from collections import deque
@@ -75,8 +75,10 @@ class Transition:
     )
     # chosen action ID
     action_id: int = 0
-    # received reward
-    reward: float = 0.0
+    # cumulative reward after the action
+    cum_reward: float = 0.0
+    # step reward after the action
+    step_reward: float = 0.0
     # next observation
     next_ob: str = ""
     # next action candidates
@@ -89,11 +91,18 @@ class Transition:
     done: bool = False
 
     def __eq__(self, other):
-        if super().__eq__(other):
-            return self.current_graph.equal(
-                other.current_graph
-            ) and self.next_graph.equal(other.next_graph)
-        return False
+        return (
+            self.ob == other.ob
+            and self.action_cands == other.action_cands
+            and self.current_graph.equal(other.current_graph)
+            and self.action_id == other.action_id
+            and self.cum_reward == other.cum_reward
+            and self.step_reward == other.step_reward
+            and self.next_ob == other.next_ob
+            and self.next_action_cands == other.next_action_cands
+            and self.next_graph.equal(other.next_graph)
+            and self.done == other.done
+        )
 
 
 class TransitionCache:
@@ -107,7 +116,8 @@ class TransitionCache:
         batch_action_cands: List[List[str]],
         current_graphs: torch.Tensor,
         actions_idx: List[int],
-        rewards: List[float],
+        cum_rewards: List[float],
+        step_rewards: List[float],
         dones: List[bool],
         next_obs: List[str],
         batch_next_action_cands: List[List[str]],
@@ -118,7 +128,8 @@ class TransitionCache:
             action_cands,
             current_graph,
             action_id,
-            reward,
+            cum_reward,
+            step_reward,
             done,
             next_ob,
             next_action_cands,
@@ -129,7 +140,8 @@ class TransitionCache:
                 batch_action_cands,
                 current_graphs,
                 actions_idx,
-                rewards,
+                cum_rewards,
+                step_rewards,
                 dones,
                 next_obs,
                 batch_next_action_cands,
@@ -145,7 +157,8 @@ class TransitionCache:
                     action_cands=action_cands,
                     current_graph=current_graph,
                     action_id=action_id,
-                    reward=reward,
+                    cum_reward=cum_reward,
+                    step_reward=step_reward,
                     next_ob=next_ob,
                     next_action_cands=next_action_cands,
                     next_graph=next_graph,
@@ -154,10 +167,12 @@ class TransitionCache:
             )
 
     def get_avg_rewards(self) -> List[float]:
-        return [
-            np.mean([transition.reward for transition in episode])  # type: ignore
-            for episode in self.cache
-        ]
+        """
+        TextWorld returns cumulative rewards at each step, so in order to calculate
+        the average rewards, we just need to divide the final rewards by the number
+        of transitions
+        """
+        return [episode[-1].cum_reward / len(episode) for episode in self.cache]
 
 
 class ReplayBufferDataset(IterableDataset):
@@ -539,74 +554,24 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def populate_replay_buffer(self) -> None:
         episodes_played = 0
+
+        # we don't want to sample, so just yield None
+        def sample() -> Generator[Optional[Transition], None, None]:
+            yield None
+
+        def act_random(_: torch.Tensor, action_mask: torch.Tensor) -> List[int]:
+            return self.agent.select_random(action_mask).tolist()
+
+        # noop
+        def episode_end() -> None:
+            pass
+
         while (
             episodes_played
             < self.hparams.replay_buffer_populate_episodes  # type: ignore
         ):
-            transition_cache = TransitionCache(self.train_env.batch_size)
-            rnn_prev_hidden: Optional[torch.Tensor] = None
-            prev_actions: Optional[List[str]] = None
-            prev_obs: List[str] = []
-            prev_action_cands: List[List[str]] = []
-            prev_graph: torch.Tensor = torch.empty(0)
-            prev_actions_idx: List[int] = []
-            prev_rewards: List[float] = []
-            prev_dones: List[bool] = [False] * self.train_env.batch_size
-
-            raw_obs, infos = self.train_env.reset()
-            while True:
-                if all(prev_dones):
-                    # if all the previous episodes are done, we can stop
-                    break
-
-                # clean observations
-                obs = self.agent.preprocessor.batch_clean(raw_obs)
-
-                # filter action cands
-                action_cands = self.agent.filter_action_cands(
-                    infos["admissible_commands"]
-                )
-                results = self.agent.calculate_action_scores(
-                    obs,
-                    action_cands,
-                    prev_actions=prev_actions,
-                    rnn_prev_hidden=rnn_prev_hidden,
-                )
-                curr_graph = results["curr_graph"].cpu()
-
-                # if we took a step before, add a transition
-                if prev_actions is not None:
-                    # add the previous transition to the cache
-                    transition_cache.batch_add(
-                        prev_obs,
-                        prev_action_cands,
-                        prev_graph,
-                        prev_actions_idx,
-                        prev_rewards,
-                        prev_dones,
-                        obs,
-                        action_cands,
-                        curr_graph,
-                    )
-                # select actions randomly
-                actions_idx = self.agent.select_random(results["action_mask"]).tolist()
-
-                # take a step
-                prev_actions = self.agent.decode_actions(action_cands, actions_idx)
-                raw_obs, rewards, dones, infos = self.train_env.step(prev_actions)
-
-                # set up the next step
-                # first save the previous state
-                prev_obs = obs
-                prev_action_cands = action_cands
-                prev_graph = curr_graph
-                prev_actions_idx = actions_idx
-                prev_rewards = rewards
-                prev_dones = dones
-                rnn_prev_hidden = results["rnn_curr_hidden"]
-
-            # push transitions into the buffer
-            self.push_to_buffer(transition_cache)
+            for _ in self.play_episodes(sample, act_random, episode_end):
+                pass
             episodes_played += self.train_env.batch_size
 
     def gen_train_batch(self) -> Iterator[Transition]:
@@ -616,23 +581,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         The number of parallel episodes is self.train_env.batch_size.
         This means that one epoch = self.train_env.batch_size episodes
         """
-        transition_cache = TransitionCache(self.train_env.batch_size)
-        rnn_prev_hidden: Optional[torch.Tensor] = None
-        prev_actions: Optional[List[str]] = None
-        prev_obs: List[str] = []
-        prev_action_cands: List[List[str]] = []
-        prev_graph: torch.Tensor = torch.empty(0)
-        prev_actions_idx: List[int] = []
-        prev_rewards: List[float] = []
-        prev_dones: List[bool] = [False] * self.train_env.batch_size
 
-        # Play a batch of episodes.
-        # In order to ensure that all of the transitions have the next state
-        # so we collect transitions one step shifted.
-        episodes_played = self.current_epoch * self.train_env.batch_size
-        raw_obs, infos = self.train_env.reset()
-        while True:
-            # Check if we should yield a sample
+        def sample() -> Generator[Optional[Transition], None, None]:
             if (
                 self.total_episode_steps
                 % self.hparams.training_step_freq  # type: ignore
@@ -642,11 +592,56 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 # yield frequency, yield a batch
                 yield from self.sample()
 
+        def act_epsilon_greedy(
+            action_scores: torch.Tensor, action_mask: torch.Tensor
+        ) -> List[int]:
+            return self.agent.select_epsilon_greedy(
+                self.agent.action_selector.select_max_q(action_scores, action_mask),
+                self.agent.select_random(action_mask),
+            ).tolist()
+
+        def episode_end() -> None:
+            self.total_episode_steps += 1
+
+        yield from self.play_episodes(sample, act_epsilon_greedy, episode_end)
+
+        # set up for the next batch of episodes
+        if (
+            self.current_epoch
+            % self.hparams.target_net_update_frequency  # type: ignore
+        ):
+            self.update_target_action_selector()
+        episodes_played = self.current_epoch * self.train_env.batch_size
+        self.agent.update_epsilon(episodes_played)
+
+    def play_episodes(
+        self,
+        sample: Callable[[], Generator[Optional[Transition], None, None]],
+        action_select_fn: Callable[[torch.Tensor, torch.Tensor], List[int]],
+        episode_end_fn: Callable[[], None],
+    ) -> Iterator[Transition]:
+        transition_cache = TransitionCache(self.train_env.batch_size)
+        rnn_prev_hidden: Optional[torch.Tensor] = None
+        prev_actions: Optional[List[str]] = None
+        prev_obs: List[str] = []
+        prev_action_cands: List[List[str]] = []
+        prev_graph: torch.Tensor = torch.empty(0)
+        prev_actions_idx: List[int] = []
+        prev_cum_rewards: List[float] = [0.0] * self.train_env.batch_size
+        prev_step_rewards: List[float] = []
+        prev_dones: List[bool] = [False] * self.train_env.batch_size
+
+        raw_obs, infos = self.train_env.reset()
+        while True:
+            for sampled in sample():
+                if sampled is None:
+                    continue
+                yield sampled
+
             if all(prev_dones):
                 # if all the previous episodes are done, we can stop
                 break
 
-            # now take a step
             # clean observations
             obs = self.agent.preprocessor.batch_clean(raw_obs)
 
@@ -659,6 +654,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 rnn_prev_hidden=rnn_prev_hidden,
             )
             curr_graph = results["curr_graph"].cpu()
+
+            # select actions randomly
+            actions_idx = action_select_fn(
+                results["action_scores"], results["action_mask"]
+            )
+
+            # take a step
+            prev_actions = self.agent.decode_actions(action_cands, actions_idx)
+            raw_obs, cum_rewards, dones, infos = self.train_env.step(prev_actions)
+
             # if we took a step before, add a transition
             if prev_actions is not None:
                 # add the previous transition to the cache
@@ -667,25 +672,13 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                     prev_action_cands,
                     prev_graph,
                     prev_actions_idx,
-                    prev_rewards,
+                    prev_cum_rewards,
+                    prev_step_rewards,
                     prev_dones,
                     obs,
                     action_cands,
                     curr_graph,
                 )
-
-            # select actions based on the epsilon greedy strategy
-            actions_idx = self.agent.select_epsilon_greedy(
-                self.agent.action_selector.select_max_q(
-                    results["action_scores"], results["action_mask"]
-                ),
-                self.agent.select_random(results["action_mask"]),
-            ).tolist()
-            # (batch)
-
-            # take a step
-            prev_actions = self.agent.decode_actions(action_cands, actions_idx)
-            raw_obs, rewards, dones, infos = self.train_env.step(prev_actions)
 
             # set up the next step
             # first save the previous state
@@ -693,26 +686,22 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             prev_action_cands = action_cands
             prev_graph = curr_graph
             prev_actions_idx = actions_idx
-            prev_rewards = rewards
+            prev_step_rewards = [
+                curr - prev for prev, curr in zip(prev_cum_rewards, cum_rewards)
+            ]
+            prev_cum_rewards = cum_rewards
             prev_dones = dones
             rnn_prev_hidden = results["rnn_curr_hidden"]
-            self.total_episode_steps += 1
+            episode_end_fn()
+
         # push transitions into the buffer
         self.push_to_buffer(transition_cache)
-
-        # set up for the next batch of episodes
-        if (
-            self.current_epoch
-            % self.hparams.target_net_update_frequency  # type: ignore
-        ):
-            self.update_target_action_selector()
-        self.agent.update_epsilon(episodes_played)
 
     def push_to_buffer(self, t_cache: TransitionCache) -> None:
         buffer_avg_reward = 0.0
         if len(self.buffer) > 0:
             buffer_avg_reward = np.mean(  # type: ignore
-                [transition.reward for transition in self.buffer]
+                [transition.step_reward for transition in self.buffer]
             )
         for avg_reward, transitions in zip(t_cache.get_avg_rewards(), t_cache.cache):
             if (
@@ -736,7 +725,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             action_cands.append(transition.action_cands)
             curr_graphs.append(transition.current_graph)
             actions_idx.append(transition.action_id)
-            rewards.append(transition.reward)
+            rewards.append(transition.step_reward)
             next_obs.append(transition.next_ob)
             next_action_cands.append(transition.next_action_cands)
             next_graphs.append(transition.next_graph)
