@@ -5,6 +5,7 @@ import pytorch_lightning as pl
 import numpy as np
 import hydra
 import itertools
+import gym
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
@@ -587,12 +588,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             }
         )
 
-    def validation_step(  # type: ignore
-        self, _batch: torch.Tensor, _batch_idx: int
-    ) -> Dict[str, torch.Tensor]:
+    def eval_step(self, env: gym.Env) -> Dict[str, torch.Tensor]:  # type: ignore
         prev_actions: Optional[List[str]] = None
         rnn_prev_hidden: Optional[torch.Tensor] = None
-        obs, infos = self.val_env.reset()
+        obs, infos = env.reset()
         steps: List[int] = [0] * len(obs)
         for step in itertools.count():
             actions, rnn_prev_hidden = self.agent.act(
@@ -601,7 +600,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 prev_actions=prev_actions,
                 rnn_prev_hidden=rnn_prev_hidden,
             )
-            obs, rewards, dones, infos = self.val_env.step(actions)
+            obs, rewards, dones, infos = env.step(actions)
             for i, done in enumerate(dones):
                 if steps[i] == 0 and done:
                     steps[i] = step
@@ -619,20 +618,41 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "game_steps": torch.tensor(steps, dtype=torch.float),
         }
 
-    def validation_epoch_end(self, outputs: List[Dict[str, torch.Tensor]]) -> None:
+    def eval_epoch_end(
+        self, outputs: List[Dict[str, torch.Tensor]], prefix: str
+    ) -> None:
         self.log_dict(
             {
-                "val_game_rewards": torch.cat(
+                prefix
+                + "_game_rewards": torch.cat(
                     [output["game_rewards"] for output in outputs]
                 ).mean(),
-                "val_game_normalized_rewards": torch.cat(
+                prefix
+                + "_game_normalized_rewards": torch.cat(
                     [output["game_normalized_rewards"] for output in outputs]
                 ).mean(),
-                "val_game_steps": torch.cat(
+                prefix
+                + "_game_steps": torch.cat(
                     [output["game_steps"] for output in outputs]
                 ).mean(),
             }
         )
+
+    def validation_step(  # type: ignore
+        self, _batch: torch.Tensor, _batch_idx: int
+    ) -> Dict[str, torch.Tensor]:
+        return self.eval_step(self.val_env)
+
+    def validation_epoch_end(self, outputs: List[Dict[str, torch.Tensor]]) -> None:
+        self.eval_epoch_end(outputs, "val")
+
+    def test_step(  # type: ignore
+        self, _batch: torch.Tensor, _batch_idx: int
+    ) -> Dict[str, torch.Tensor]:
+        return self.eval_step(self.test_env)
+
+    def test_epoch_end(self, outputs: List[Dict[str, torch.Tensor]]) -> None:
+        self.eval_epoch_end(outputs, "test")
 
     def train_dataloader(self) -> DataLoader:
         self.populate_replay_buffer()
@@ -643,6 +663,12 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
     def val_dataloader(self) -> DataLoader:
+        return DataLoader(
+            RLEvalDataset(len(self.val_env.gamefiles)),
+            batch_size=self.hparams.eval_game_batch_size,  # type: ignore
+        )
+
+    def test_dataloader(self) -> DataLoader:
         return DataLoader(
             RLEvalDataset(len(self.val_env.gamefiles)),
             batch_size=self.hparams.eval_game_batch_size,  # type: ignore
@@ -910,6 +936,9 @@ def main(cfg: DictConfig) -> None:
 
     # fit
     trainer.fit(lm)
+
+    # test
+    trainer.test()
 
 
 if __name__ == "__main__":
