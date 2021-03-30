@@ -9,7 +9,9 @@ import gym
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
+from pytorch_lightning.callbacks import ModelCheckpoint
 from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.utilities import rank_zero_warn
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable, Generator
 from textworld import EnvInfos
@@ -910,6 +912,48 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             yield self.buffer[idx]
 
 
+class EqualModelCheckpoint(ModelCheckpoint):
+    def check_monitor_top_k(
+        self, trainer, current: Optional[torch.Tensor] = None
+    ) -> bool:
+        """
+        Use torch.le, torch.ge instead of torch.lt, torch.gt
+        """
+        if current is None:
+            return False
+
+        if self.save_top_k == -1:
+            return True
+
+        less_than_k_models = len(self.best_k_models) < self.save_top_k  # type: ignore
+        if less_than_k_models:
+            return True
+
+        if not isinstance(current, torch.Tensor):
+            rank_zero_warn(
+                f"{current} is supposed to be a `torch.Tensor`. Saving checkpoint may "
+                "not work correctly."
+                f" HINT: check the value of {self.monitor} in your validation loop",
+                RuntimeWarning,
+            )
+            current = torch.tensor(current)
+
+        monitor_op = {"min": torch.le, "max": torch.ge}[self.mode]
+        should_update_best_and_save = monitor_op(
+            current, self.best_k_models[self.kth_best_model_path]
+        )
+
+        # If using multiple devices, make sure all processes are unanimous
+        # on the decision.
+        should_update_best_and_save = (
+            trainer.training_type_plugin.reduce_boolean_decision(
+                should_update_best_and_save
+            )
+        )
+
+        return should_update_best_and_save  # type: ignore
+
+
 @hydra.main(config_path="train_gata_conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
@@ -923,7 +967,26 @@ def main(cfg: DictConfig) -> None:
     trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
     if isinstance(trainer_config["logger"], WandbLogger):
         trainer_config["callbacks"] = [WandbSaveCallback()]
-    trainer = pl.Trainer(**trainer_config)
+    trainer = pl.Trainer(
+        **trainer_config,
+        callbacks=[
+            EqualModelCheckpoint(
+                monitor="train_avg_game_normalized_rewards",
+                mode="max",
+                filename="{epoch}-{step}-{train_avg_game_normalized_rewards:.2f}",
+            ),
+            # because of a bug:
+            # https://github.com/PyTorchLightning/pytorch-lightning/issues/6467
+            # we need to pass in the validation model checkpoint last
+            # the train model checkpoint won't really be used
+            # after the validation metrics goes over 0.
+            EqualModelCheckpoint(
+                monitor="val_avg_game_normalized_rewards",
+                mode="max",
+                filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
+            ),
+        ],
+    )
 
     # instantiate the lightning module
     lm_model_config = OmegaConf.to_container(cfg.model, resolve=True)
