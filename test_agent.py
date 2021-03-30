@@ -315,7 +315,7 @@ def test_eps_greedy_agent_select_random(eps_greedy_agent, action_mask):
 
 @pytest.mark.parametrize(
     "epsilon_anneal_from,epsilon_anneal_to,epsilon_anneal_episodes",
-    [(0.1, 1.0, 20), (0.0, 1.0, 20), (1.0, 1.0, 20), (0.1, 1.0, 20000)],
+    [(1.0, 0.1, 20), (1.0, 0.0, 20), (1.0, 1.0, 20), (1.0, 0.1, 20000)],
 )
 def test_update_epsilon(
     eps_greedy_agent,

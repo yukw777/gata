@@ -35,6 +35,10 @@ train:
   training_step_freq: 50
   replay_buffer_reward_threshold: 0.1
   target_net_update_frequency: 500
+  epsilon_anneal_from: 1.0
+  epsilon_anneal_to: 0.1
+  epsilon_anneal_episodes: 20000
+  reward_discount: 0.9
 
 pl_trainer:
   max_epochs: 4000  # max_episodes/train_game_batch_size = 100000/25

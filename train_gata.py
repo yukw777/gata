@@ -570,7 +570,14 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             batch["rewards"]
             + next_q_values * self.hparams.reward_discount,  # type: ignore
         )
-        self.log("train_loss", loss, on_step=False, on_epoch=True)
+        self.log_dict(
+            {
+                "train_loss": loss,
+                "epsilon": self.agent.epsilon,
+            },
+            on_step=False,
+            on_epoch=True,
+        )
         return loss
 
     def training_epoch_end(self, _) -> None:
