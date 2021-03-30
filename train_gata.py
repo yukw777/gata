@@ -631,15 +631,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         self.log_dict(
             {
                 prefix
-                + "_game_rewards": torch.cat(
+                + "_avg_game_rewards": torch.cat(
                     [output["game_rewards"] for output in outputs]
                 ).mean(),
                 prefix
-                + "_game_normalized_rewards": torch.cat(
+                + "_avg_game_normalized_rewards": torch.cat(
                     [output["game_normalized_rewards"] for output in outputs]
                 ).mean(),
                 prefix
-                + "_game_steps": torch.cat(
+                + "_avg_game_steps": torch.cat(
                     [output["game_steps"] for output in outputs]
                 ).mean(),
             }
