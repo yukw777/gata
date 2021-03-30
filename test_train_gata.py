@@ -576,9 +576,12 @@ def test_main(tmp_path):
                 "data.train_max_episode_steps=5",
                 "data.train_sample_batch_size=4",
                 "data.replay_buffer_populate_episodes=3",
+                "data.eval_max_episode_steps=5",
+                "data.eval_game_batch_size=3",
                 "train.training_step_freq=4",
                 "train.target_net_update_frequency=3",
-                "pl_trainer.max_epochs=7",
+                "pl_trainer.max_epochs=2",
+                f"+pl_trainer.default_root_dir={tmp_path}",
             ],
         )
         main(cfg)

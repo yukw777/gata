@@ -4,6 +4,7 @@ import torch.nn as nn
 import pytorch_lightning as pl
 import numpy as np
 import hydra
+import itertools
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
@@ -11,7 +12,7 @@ from pytorch_lightning.loggers import WandbLogger
 from dataclasses import dataclass, field
 from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable, Generator
 from textworld import EnvInfos
-from torch.utils.data import IterableDataset, DataLoader
+from torch.utils.data import IterableDataset, DataLoader, Dataset
 from collections import deque
 
 from utils import load_textworld_games, WandbSaveCallback
@@ -187,6 +188,23 @@ class ReplayBufferDataset(IterableDataset):
 
     def __iter__(self) -> Iterable:
         return self.generate_batch()
+
+
+class RLEvalDataset(Dataset):
+    """
+    A dummy dataset for reinforcement learning evaluation.
+    We need this to "kick off" the validation/test loop in PL.
+    Without this, PL wouldn't run them.
+    """
+
+    def __init__(self, num_gamefiles: int) -> None:
+        self.num_gamefiles = num_gamefiles
+
+    def __getitem__(self, idx: int) -> int:
+        return idx
+
+    def __len__(self) -> int:
+        return self.num_gamefiles
 
 
 class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
@@ -569,12 +587,65 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             }
         )
 
+    def validation_step(  # type: ignore
+        self, _batch: torch.Tensor, _batch_idx: int
+    ) -> Dict[str, torch.Tensor]:
+        prev_actions: Optional[List[str]] = None
+        rnn_prev_hidden: Optional[torch.Tensor] = None
+        obs, infos = self.val_env.reset()
+        steps: List[int] = [0] * len(obs)
+        for step in itertools.count():
+            actions, rnn_prev_hidden = self.agent.act(
+                obs,
+                infos["admissible_commands"],
+                prev_actions=prev_actions,
+                rnn_prev_hidden=rnn_prev_hidden,
+            )
+            obs, rewards, dones, infos = self.val_env.step(actions)
+            for i, done in enumerate(dones):
+                if steps[i] == 0 and done:
+                    steps[i] = step
+            if all(dones):
+                break
+
+        return {
+            "game_rewards": torch.tensor(rewards, dtype=torch.float),
+            "game_normalized_rewards": torch.tensor(
+                [
+                    reward / game.metadata["max_score"]
+                    for reward, game in zip(rewards, infos["game"])
+                ]
+            ),
+            "game_steps": torch.tensor(steps, dtype=torch.float),
+        }
+
+    def validation_epoch_end(self, outputs: List[Dict[str, torch.Tensor]]) -> None:
+        self.log_dict(
+            {
+                "val_game_rewards": torch.cat(
+                    [output["game_rewards"] for output in outputs]
+                ).mean(),
+                "val_game_normalized_rewards": torch.cat(
+                    [output["game_normalized_rewards"] for output in outputs]
+                ).mean(),
+                "val_game_steps": torch.cat(
+                    [output["game_steps"] for output in outputs]
+                ).mean(),
+            }
+        )
+
     def train_dataloader(self) -> DataLoader:
         self.populate_replay_buffer()
         return DataLoader(
             ReplayBufferDataset(self.gen_train_batch),
             batch_size=self.hparams.train_sample_batch_size,  # type: ignore
             collate_fn=self.prepare_batch,
+        )
+
+    def val_dataloader(self) -> DataLoader:
+        return DataLoader(
+            RLEvalDataset(len(self.val_env.gamefiles)),
+            batch_size=self.hparams.eval_game_batch_size,  # type: ignore
         )
 
     def configure_optimizers(self):
