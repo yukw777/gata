@@ -1026,7 +1026,7 @@ def main(cfg: DictConfig) -> None:
         ),
     ]
     if isinstance(trainer_config["logger"], WandbLogger):
-        trainer_config["callbacks"] = [WandbSaveCallback()]
+        trainer_config["callbacks"].append(WandbSaveCallback())
     trainer = pl.Trainer(**trainer_config)
 
     # instantiate the lightning module
