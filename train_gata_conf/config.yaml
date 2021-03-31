@@ -39,6 +39,7 @@ train:
   epsilon_anneal_to: 0.1
   epsilon_anneal_episodes: 20000
   reward_discount: 0.9
+  ckpt_patience: 3
 
 pl_trainer:
   max_epochs: 4000  # max_episodes/train_game_batch_size = 100000/25

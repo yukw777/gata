@@ -242,6 +242,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         epsilon_anneal_to: float = 0.1,
         epsilon_anneal_episodes: int = 20000,
         reward_discount: float = 0.9,
+        ckpt_patience: int = 3,
         word_vocab_path: Optional[str] = None,
         node_vocab_path: Optional[str] = None,
         relation_vocab_path: Optional[str] = None,
@@ -278,6 +279,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "epsilon_anneal_to",
             "epsilon_anneal_episodes",
             "reward_discount",
+            "ckpt_patience",
         )
 
         # load the test rl data
@@ -455,6 +457,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
         # bookkeeping
         self.total_episode_steps = 0
+        self.ckpt_patience_count = 0
 
         # metrics
         self.game_rewards: List[int] = []
@@ -654,6 +657,46 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def validation_epoch_end(self, outputs: List[Dict[str, torch.Tensor]]) -> None:
         self.eval_epoch_end(outputs, "val")
+
+    def on_validation_end(self) -> None:
+        train_model_ckpt, val_model_ckpt = list(
+            filter(
+                lambda c: isinstance(c, EqualModelCheckpoint), self.trainer.callbacks
+            )
+        )
+        if (
+            val_model_ckpt.best_model_score is None
+            and train_model_ckpt.best_model_score is None
+        ):
+            # we haven't collected any metrics yet, so just return
+            return
+        if val_model_ckpt.best_model_score > 0:
+            val_current_score = self.trainer.logger_connector.callback_metrics[
+                "val_avg_game_normalized_rewards"
+            ]
+            if val_current_score < val_model_ckpt.best_model_score:
+                self.ckpt_patience_count += 1
+            else:
+                self.ckpt_patience_count = 0
+        else:
+            train_current_score = self.trainer.logger_connector.callback_metrics[
+                "train_avg_game_normalized_rewards"
+            ]
+            if train_current_score < train_model_ckpt.best_model_score:
+                self.ckpt_patience_count += 1
+            else:
+                self.ckpt_patience_count = 0
+        if self.ckpt_patience_count >= self.hparams.ckpt_patience:  # type: ignore
+            # reload the best checkpoint
+            if val_model_ckpt.best_model_score > 0:
+                self.print("patience ran out. loading from best validation checkpoint")
+                state_dict = torch.load(val_model_ckpt.best_model_path)["state_dict"]
+            else:
+                self.print("patience ran out. loading from best training checkpoint")
+                state_dict = torch.load(train_model_ckpt.best_model_path)["state_dict"]
+            self.load_state_dict(state_dict)
+            self.update_target_action_selector()
+            self.ckpt_patience_count = 0
 
     def test_step(  # type: ignore
         self, _batch: torch.Tensor, _batch_idx: int
