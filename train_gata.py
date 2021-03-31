@@ -9,11 +9,21 @@ import gym
 
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, Callback
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.utilities import rank_zero_warn
 from dataclasses import dataclass, field
-from typing import Optional, Dict, List, Iterator, Deque, Callable, Iterable, Generator
+from typing import (
+    Optional,
+    Dict,
+    List,
+    Iterator,
+    Deque,
+    Callable,
+    Iterable,
+    Generator,
+    Any,
+)
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader, Dataset
 from collections import deque
@@ -1005,6 +1015,76 @@ class EqualNonZeroModelCheckpoint(EqualModelCheckpoint):
         return super().check_monitor_top_k(trainer, current=current)
 
 
+class RLEarlyStopping(Callback):
+    def __init__(
+        self,
+        val_monitor: str,
+        train_monitor: str,
+        threshold: float,
+        patience: int = 3,
+    ):
+        super().__init__()
+        self.val_monitor = val_monitor
+        self.train_monitor = train_monitor
+        self.threshold = threshold
+        self.patience = patience
+        self.wait_count = 0
+        self.stopped_epoch = 0
+        self.best_score = -torch.tensor(np.Inf)
+
+    def on_save_checkpoint(
+        self, trainer, pl_module, checkpoint: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        return {
+            "wait_count": self.wait_count,
+            "stopped_epoch": self.stopped_epoch,
+            "best_score": self.best_score,
+            "patience": self.patience,
+        }
+
+    def on_load_checkpoint(self, callback_state: Dict[str, Any]):
+        self.wait_count = callback_state["wait_count"]
+        self.stopped_epoch = callback_state["stopped_epoch"]
+        self.best_score = callback_state["best_score"]
+        self.patience = callback_state["patience"]
+
+    def on_validation_end(self, trainer, pl_module):
+        if trainer.running_sanity_check:
+            return
+
+        self._run_early_stopping_check(trainer, pl_module)
+
+    def _run_early_stopping_check(self, trainer, pl_module):
+        """
+        Stop if the validation score is 1.0 and the train score is greater than
+        or equal to the threshold. Also, if the traing score is above the threshold for
+        `self.patience` times, stop.
+        """
+        if trainer.fast_dev_run:  # disable early_stopping with fast_dev_run
+            return  # short circuit if metric not present
+
+        logs = trainer.callback_metrics
+
+        val_current = logs.get(self.val_monitor)
+        train_current = logs.get(self.train_monitor)
+        if val_current == 1.0 and train_current >= self.threshold:
+            self.stopped_epoch = trainer.current_epoch
+            trainer.should_stop = True
+
+        if train_current >= self.threshold:
+            self.wait_count += 1
+            if self.wait_count >= self.patience:
+                self.stopped_epoch = trainer.current_epoch
+                trainer.should_stop = True
+        else:
+            self.wait_count = 0
+
+        # stop every ddp process if any world process decides to stop
+        trainer.should_stop = trainer.training_type_plugin.reduce_boolean_decision(
+            trainer.should_stop
+        )
+
+
 @hydra.main(config_path="train_gata_conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
@@ -1016,9 +1096,17 @@ def main(cfg: DictConfig) -> None:
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
     assert isinstance(trainer_config, dict)
     trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
+    val_monitor = "val_avg_game_normalized_rewards"
+    train_monitor = "train_avg_game_normalized_rewards"
     trainer_config["callbacks"] = [
+        RLEarlyStopping(
+            val_monitor,
+            train_monitor,
+            cfg.train.early_stop_threshold,
+            patience=cfg.train.early_stop_patience,
+        ),
         EqualModelCheckpoint(
-            monitor="train_avg_game_normalized_rewards",
+            monitor=train_monitor,
             mode="max",
             filename="{epoch}-{step}-{train_avg_game_normalized_rewards:.2f}",
         ),
@@ -1028,7 +1116,7 @@ def main(cfg: DictConfig) -> None:
         # the train model checkpoint won't really be used
         # after the validation metrics goes over 0.
         EqualNonZeroModelCheckpoint(
-            monitor="val_avg_game_normalized_rewards",
+            monitor=val_monitor,
             mode="max",
             filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
         ),
