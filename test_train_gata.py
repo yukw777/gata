@@ -152,35 +152,41 @@ def test_gata_double_dqn_update_target_action_selector():
 
 
 @pytest.mark.parametrize(
-    "batch_size,obs_len,num_action_cands,action_cand_len",
-    [(1, 5, 4, 10), (3, 6, 5, 12)],
+    "batch_size,obs_len,prev_action_len,num_action_cands,action_cand_len",
+    [(1, 5, 3, 4, 10), (3, 6, 4, 5, 12)],
 )
 def test_gata_double_dqn_forward(
     batch_size,
     obs_len,
+    prev_action_len,
     num_action_cands,
     action_cand_len,
 ):
     gata_ddqn = GATADoubleDQN()
-    assert (
-        gata_ddqn(
-            torch.randint(gata_ddqn.num_words, (batch_size, obs_len)),
-            increasing_mask(batch_size, obs_len),
-            torch.rand(
-                batch_size,
-                gata_ddqn.num_relations,
-                gata_ddqn.num_nodes,
-                gata_ddqn.num_nodes,
-            ),
-            torch.randint(
-                gata_ddqn.num_words, (batch_size, num_action_cands, action_cand_len)
-            ),
-            increasing_mask(batch_size * num_action_cands, action_cand_len).view(
-                batch_size, num_action_cands, action_cand_len
-            ),
-            increasing_mask(batch_size, num_action_cands),
-        ).size()
-        == (batch_size, num_action_cands)
+    results = gata_ddqn(
+        torch.randint(gata_ddqn.num_words, (batch_size, obs_len)),
+        increasing_mask(batch_size, obs_len),
+        torch.randint(gata_ddqn.num_words, (batch_size, prev_action_len)),
+        increasing_mask(batch_size, prev_action_len),
+        torch.rand(batch_size, gata_ddqn.hparams.hidden_dim),
+        torch.randint(
+            gata_ddqn.num_words, (batch_size, num_action_cands, action_cand_len)
+        ),
+        increasing_mask(batch_size * num_action_cands, action_cand_len).view(
+            batch_size, num_action_cands, action_cand_len
+        ),
+        increasing_mask(batch_size, num_action_cands),
+    )
+    assert results["action_scores"].size() == (batch_size, num_action_cands)
+    assert results["rnn_curr_hidden"].size() == (
+        batch_size,
+        gata_ddqn.hparams.hidden_dim,
+    )
+    assert results["current_graph"].size() == (
+        batch_size,
+        gata_ddqn.num_relations,
+        gata_ddqn.num_nodes,
+        gata_ddqn.num_nodes,
     )
 
 
@@ -222,14 +228,20 @@ def test_gata_double_dqn_get_q_values(
 
 
 @pytest.mark.parametrize(
-    "batch_size,obs_len,num_action_cands,action_cand_len",
+    "batch_size,obs_len,prev_action_len,curr_action_len,"
+    "num_action_cands,action_cand_len",
     [
-        (1, 8, 5, 3),
-        (3, 12, 8, 4),
+        (1, 8, 6, 4, 5, 3),
+        (3, 12, 10, 9, 8, 4),
     ],
 )
 def test_gata_double_dqn_training_step(
-    batch_size, obs_len, num_action_cands, action_cand_len
+    batch_size,
+    obs_len,
+    prev_action_len,
+    curr_action_len,
+    num_action_cands,
+    action_cand_len,
 ):
     gata_ddqn = GATADoubleDQN()
     # Note: batch_idx is not used
@@ -238,12 +250,11 @@ def test_gata_double_dqn_training_step(
             {
                 "obs_word_ids": torch.randint(4, (batch_size, obs_len)),
                 "obs_mask": torch.randint(2, (batch_size, obs_len), dtype=torch.float),
-                "current_graph": torch.rand(
-                    batch_size,
-                    gata_ddqn.num_relations,
-                    gata_ddqn.num_nodes,
-                    gata_ddqn.num_nodes,
+                "prev_action_word_ids": torch.randint(4, (batch_size, prev_action_len)),
+                "prev_action_mask": torch.randint(
+                    2, (batch_size, prev_action_len), dtype=torch.float
                 ),
+                "rnn_prev_hidden": torch.rand(batch_size, gata_ddqn.hparams.hidden_dim),
                 "action_cand_word_ids": torch.randint(
                     4, (batch_size, num_action_cands, action_cand_len)
                 ),
@@ -261,11 +272,9 @@ def test_gata_double_dqn_training_step(
                 "next_obs_mask": torch.randint(
                     2, (batch_size, obs_len), dtype=torch.float
                 ),
-                "next_graph": torch.rand(
-                    batch_size,
-                    gata_ddqn.num_relations,
-                    gata_ddqn.num_nodes,
-                    gata_ddqn.num_nodes,
+                "curr_action_word_ids": torch.randint(4, (batch_size, curr_action_len)),
+                "curr_action_mask": torch.randint(
+                    2, (batch_size, curr_action_len), dtype=torch.float
                 ),
                 "next_action_cand_word_ids": torch.randint(
                     4, (batch_size, num_action_cands, action_cand_len)
@@ -291,6 +300,8 @@ def test_transition_cache_batch_add():
     def generate_batch(step, dones):
         return {
             "obs": [f"{i}: step {step} obs" for i in range(3)],
+            "prev_actions": [f"{i}: step {step} prev act" for i in range(3)],
+            "rnn_prev_hiddens": torch.rand(3, 12),
             "batch_action_cands": [
                 [
                     f"{i}: step {step} act 1",
@@ -299,11 +310,9 @@ def test_transition_cache_batch_add():
                 ]
                 for i in range(3)
             ],
-            "current_graphs": torch.rand(3, 6, 4, 4),
             "actions_idx": [random.randint(0, 2) for _ in range(3)],
             "cum_rewards": [random.random() for _ in range(3)],
             "step_rewards": [random.random() for _ in range(3)],
-            "dones": dones,
             "next_obs": [f"{i}: step {step} next obs" for i in range(3)],
             "batch_next_action_cands": [
                 [
@@ -313,22 +322,22 @@ def test_transition_cache_batch_add():
                 ]
                 for i in range(3)
             ],
-            "next_graphs": torch.rand(3, 6, 4, 4),
+            "dones": dones,
         }
 
     def compare_batch_transition(batch, batch_num, transition):
         assert transition.ob == batch["obs"][batch_num]
+        assert transition.prev_action == batch["prev_actions"][batch_num]
+        assert transition.rnn_prev_hidden.equal(batch["rnn_prev_hiddens"][batch_num])
         assert transition.action_cands == batch["batch_action_cands"][batch_num]
-        assert transition.current_graph.equal(batch["current_graphs"][batch_num])
         assert transition.action_id == batch["actions_idx"][batch_num]
         assert transition.cum_reward == batch["cum_rewards"][batch_num]
         assert transition.step_reward == batch["step_rewards"][batch_num]
-        assert transition.done == batch["dones"][batch_num]
         assert transition.next_ob == batch["next_obs"][batch_num]
         assert (
             transition.next_action_cands == batch["batch_next_action_cands"][batch_num]
         )
-        assert transition.next_graph.equal(batch["next_graphs"][batch_num])
+        assert transition.done == batch["dones"][batch_num]
 
     # add a not done step
     batch_0 = generate_batch(0, [False] * 3)
@@ -485,14 +494,16 @@ def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
         [
             Transition(
                 ob=f"{i} o",
+                prev_action=f"{i} p a",
+                rnn_prev_hidden=torch.rand(
+                    replay_buffer_gata_double_dqn.hparams.hidden_dim
+                ),
                 action_cands=[f"{i} a1", f"{i} a2"],
-                current_graph=torch.rand(2, 1, 1),
                 action_id=random.randint(0, 1),
                 cum_reward=random.random(),
                 step_reward=random.random(),
                 next_ob=f"{i} next o",
                 next_action_cands=[f"{i} next a1", f"{i} next a2"],
-                next_graph=torch.rand(2, 1, 1),
             )
             for i in range(10)
         ]
@@ -505,14 +516,17 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     transitions = [
         Transition(
             ob=f"{i} o",
+            prev_action=f"{i} p a",
+            rnn_prev_hidden=torch.rand(
+                replay_buffer_gata_double_dqn.hparams.hidden_dim
+            ),
             action_cands=[f"{i} a1", f"{i} a2"],
-            current_graph=torch.rand(2, 1, 1),
             action_id=random.randint(0, 1),
-            cum_reward=random.random(),
-            step_reward=random.random(),
+            cum_reward=random.randint(0, 10),
+            step_reward=random.randint(0, 1),
             next_ob=f"{i} next o",
             next_action_cands=[f"{i} next a1", f"{i} next a2"],
-            next_graph=torch.rand(2, 1, 1),
+            done=False,
         )
         for i in range(10)
     ]
@@ -520,17 +534,24 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     batch = replay_buffer_gata_double_dqn.prepare_batch(transitions)
     assert batch["obs_word_ids"].size() == (batch_size, 2)
     assert batch["obs_mask"].size() == (batch_size, 2)
-    assert batch["current_graph"].equal(
-        torch.stack([t.current_graph for t in transitions])
+    assert batch["prev_action_word_ids"].size() == (batch_size, 3)
+    assert batch["prev_action_mask"].size() == (batch_size, 3)
+    assert batch["rnn_prev_hidden"].size() == (
+        batch_size,
+        replay_buffer_gata_double_dqn.hparams.hidden_dim,
+    )
+    assert batch["rnn_prev_hidden"].equal(
+        torch.stack([t.rnn_prev_hidden for t in transitions])
     )
     assert batch["action_cand_word_ids"].size() == (batch_size, 2, 2)
     assert batch["action_cand_mask"].size() == (batch_size, 2, 2)
     assert batch["action_mask"].size() == (batch_size, 2)
     assert batch["actions_idx"].equal(torch.tensor([t.action_id for t in transitions]))
     assert batch["rewards"].equal(torch.tensor([t.step_reward for t in transitions]))
+    assert batch["curr_action_word_ids"].size() == (batch_size, 2)
+    assert batch["curr_action_mask"].size() == (batch_size, 2)
     assert batch["next_obs_word_ids"].size() == (batch_size, 3)
     assert batch["next_obs_mask"].size() == (batch_size, 3)
-    assert batch["next_graph"].equal(torch.stack([t.next_graph for t in transitions]))
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
     assert batch["next_action_mask"].size() == (batch_size, 2)
@@ -541,16 +562,22 @@ def test_gata_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
     for batch in replay_buffer_gata_double_dqn.train_dataloader():
         assert batch["obs_word_ids"].size(0) == batch_size
         assert batch["obs_mask"].size() == batch["obs_word_ids"].size()
-        assert batch["current_graph"].size() == (batch_size, 2, 1, 1)
+        assert batch["prev_action_word_ids"].size(0) == batch_size
+        assert batch["prev_action_mask"].size() == batch["prev_action_word_ids"].size()
+        assert batch["rnn_prev_hidden"].size() == (
+            batch_size,
+            replay_buffer_gata_double_dqn.hparams.hidden_dim,
+        )
         assert batch["action_cand_word_ids"].size(0) == batch_size
         assert batch["action_cand_mask"].size() == batch["action_cand_word_ids"].size()
         assert batch["action_mask"].size(0) == batch_size
         assert batch["action_mask"].size(1) == batch["action_cand_mask"].size(1)
         assert batch["actions_idx"].size() == (batch_size,)
         assert batch["rewards"].size() == (batch_size,)
+        assert batch["curr_action_word_ids"].size(0) == batch_size
+        assert batch["curr_action_mask"].size() == batch["curr_action_word_ids"].size()
         assert batch["next_obs_word_ids"].size(0) == batch_size
         assert batch["next_obs_mask"].size() == batch["next_obs_word_ids"].size()
-        assert batch["next_graph"].size() == (batch_size, 2, 1, 1)
         assert batch["next_action_cand_word_ids"].size(0) == batch_size
         assert (
             batch["next_action_cand_mask"].size()

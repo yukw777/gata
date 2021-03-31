@@ -81,12 +81,14 @@ class Transition:
 
     # episode observation
     ob: str = ""
-    # action candidates
-    action_cands: List[str] = field(default_factory=list)
-    # current graph
-    current_graph: torch.Tensor = field(
+    # previous action
+    prev_action: str = ""
+    # RNN prev hidden states
+    rnn_prev_hidden: torch.Tensor = field(
         default_factory=lambda: torch.empty(0), compare=False, hash=True
     )
+    # action candidates
+    action_cands: List[str] = field(default_factory=list)
     # chosen action ID
     action_id: int = 0
     # cumulative reward after the action
@@ -97,10 +99,6 @@ class Transition:
     next_ob: str = ""
     # next action candidates
     next_action_cands: List[str] = field(default_factory=list)
-    # next graph
-    next_graph: torch.Tensor = field(
-        default_factory=lambda: torch.empty(0), compare=False, hash=True
-    )
     # done
     done: bool = False
 
@@ -108,13 +106,12 @@ class Transition:
         return (
             self.ob == other.ob
             and self.action_cands == other.action_cands
-            and self.current_graph.equal(other.current_graph)
+            and self.rnn_prev_hidden.equal(other.rnn_prev_hidden)
             and self.action_id == other.action_id
             and self.cum_reward == other.cum_reward
             and self.step_reward == other.step_reward
             and self.next_ob == other.next_ob
             and self.next_action_cands == other.next_action_cands
-            and self.next_graph.equal(other.next_graph)
             and self.done == other.done
         )
 
@@ -127,39 +124,39 @@ class TransitionCache:
     def batch_add(
         self,
         obs: List[str],
+        prev_actions: List[str],
+        rnn_prev_hiddens: torch.Tensor,
         batch_action_cands: List[List[str]],
-        current_graphs: torch.Tensor,
         actions_idx: List[int],
         cum_rewards: List[float],
         step_rewards: List[float],
-        dones: List[bool],
         next_obs: List[str],
         batch_next_action_cands: List[List[str]],
-        next_graphs: torch.Tensor,
+        dones: List[bool],
     ) -> None:
         for i, (
             ob,
+            prev_action,
+            rnn_prev_hidden,
             action_cands,
-            current_graph,
             action_id,
             cum_reward,
             step_reward,
-            done,
             next_ob,
             next_action_cands,
-            next_graph,
+            done,
         ) in enumerate(
             zip(
                 obs,
+                prev_actions,
+                rnn_prev_hiddens,
                 batch_action_cands,
-                current_graphs,
                 actions_idx,
                 cum_rewards,
                 step_rewards,
-                dones,
                 next_obs,
                 batch_next_action_cands,
-                next_graphs,
+                dones,
             )
         ):
             if len(self.cache[i]) > 0 and done and self.cache[i][-1].done:
@@ -168,14 +165,14 @@ class TransitionCache:
             self.cache[i].append(
                 Transition(
                     ob=ob,
+                    prev_action=prev_action,
+                    rnn_prev_hidden=rnn_prev_hidden,
                     action_cands=action_cands,
-                    current_graph=current_graph,
                     action_id=action_id,
                     cum_reward=cum_reward,
                     step_reward=step_reward,
                     next_ob=next_ob,
                     next_action_cands=next_action_cands,
-                    next_graph=next_graph,
                     done=done,
                 )
             )
@@ -486,31 +483,50 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         self,
         obs_word_ids: torch.Tensor,
         obs_mask: torch.Tensor,
-        current_graph: torch.Tensor,
+        prev_action_word_ids: torch.Tensor,
+        prev_action_mask: torch.Tensor,
+        rnn_prev_hidden: torch.Tensor,
         action_cand_word_ids: torch.Tensor,
         action_cand_mask: torch.Tensor,
         action_mask: torch.Tensor,
-    ) -> torch.Tensor:
+    ) -> Dict[str, torch.Tensor]:
         """
         Use the online action selector to get the action scores based on the game state.
 
         obs_word_ids: (batch, obs_len)
         obs_mask: (batch, obs_len)
-        current_graph: (batch, num_relation, num_node, num_node)
+        prev_action_word_ids: (batch, prev_action_len)
+        prev_action_mask: (batch, prev_action_len)
+        rnn_prev_hidden: (batch, hidden_dim)
         action_cand_word_ids: (batch, num_action_cands, action_cand_len)
         action_cand_mask: (batch, num_action_cands, action_cand_len)
         action_mask: (batch, num_action_cands)
 
-        output: action scores of shape (batch, num_action_cands)
+        output: {
+            'action_scores: (batch, num_action_cands),
+            'rnn_curr_hidden': (batch, hidden_dim),
+            'current_graph': (batch, num_relation, num_node, num_node)
+        }
         """
-        return self.action_selector(
+        results = self.graph_updater(
             obs_word_ids,
+            prev_action_word_ids,
             obs_mask,
-            current_graph,
-            action_cand_word_ids,
-            action_cand_mask,
-            action_mask,
+            prev_action_mask,
+            rnn_prev_hidden=rnn_prev_hidden,
         )
+        return {
+            "action_scores": self.action_selector(
+                obs_word_ids,
+                obs_mask,
+                results["g_t"],
+                action_cand_word_ids,
+                action_cand_mask,
+                action_mask,
+            ),
+            "rnn_curr_hidden": results["h_t"],
+            "current_graph": results["g_t"],
+        }
 
     @staticmethod
     def get_q_values(
@@ -539,37 +555,41 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # double deep q learning
 
         # calculate the current q values
-        action_scores = self(
+        results = self(
             batch["obs_word_ids"],
             batch["obs_mask"],
-            batch["current_graph"],
+            batch["prev_action_word_ids"],
+            batch["prev_action_mask"],
+            batch["rnn_prev_hidden"],
             batch["action_cand_word_ids"],
             batch["action_cand_mask"],
             batch["action_mask"],
         )
         q_values = self.get_q_values(
-            action_scores, batch["action_mask"], batch["actions_idx"]
+            results["action_scores"], batch["action_mask"], batch["actions_idx"]
         )
 
         with torch.no_grad():
             # select the next actions with the best q values
-            next_action_scores = self(
+            next_results = self(
                 batch["next_obs_word_ids"],
                 batch["next_obs_mask"],
-                batch["next_graph"],
+                batch["curr_action_word_ids"],
+                batch["curr_action_mask"],
+                results["rnn_curr_hidden"],
                 batch["next_action_cand_word_ids"],
                 batch["next_action_cand_mask"],
                 batch["next_action_mask"],
             )
             next_actions_idx = self.action_selector.select_max_q(
-                next_action_scores, batch["next_action_mask"]
+                next_results["action_scores"], batch["next_action_mask"]
             )
 
             # calculate the next q values using the target action selector
             next_tgt_action_scores = self.target_action_selector(
                 batch["next_obs_word_ids"],
                 batch["next_obs_mask"],
-                batch["next_graph"],
+                next_results["current_graph"],
                 batch["next_action_cand_word_ids"],
                 batch["next_action_cand_mask"],
                 batch["next_action_mask"],
@@ -804,39 +824,44 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         episode_end_fn: Callable[[], None],
     ) -> Iterator[Transition]:
         transition_cache = TransitionCache(self.train_env.batch_size)
-        rnn_prev_hidden: Optional[torch.Tensor] = None
-        prev_actions: Optional[List[str]] = None
-        prev_obs: List[str] = []
-        prev_action_cands: List[List[str]] = []
-        prev_graph: torch.Tensor = torch.empty(0)
-        prev_actions_idx: List[int] = []
+        # in order to avoid having to deal with None, just start with zeros
+        # this is OK, b/c Graph Updater already initializes rnn_prev_hidden
+        # to zeros if it's None.
+        rnn_prev_hidden: torch.Tensor = torch.zeros(
+            self.train_env.batch_size,
+            self.hparams.hidden_dim,  # type: ignore
+            device=self.device,
+        )
+        prev_actions: List[str] = ["restart"] * self.train_env.batch_size
+        # prev_obs: List[str] = []
+        # prev_action_cands: List[List[str]] = []
+        # prev_graph: torch.Tensor = torch.empty(0)
+        # prev_actions_idx: List[int] = []
         prev_cum_rewards: List[float] = [0.0] * self.train_env.batch_size
-        prev_step_rewards: List[float] = []
-        prev_dones: List[bool] = [False] * self.train_env.batch_size
+        # prev_step_rewards: List[float] = []
+        dones: List[bool] = [False] * self.train_env.batch_size
 
         raw_obs, infos = self.train_env.reset()
+        # clean observations
+        obs = self.agent.preprocessor.batch_clean(raw_obs)
+        # filter action cands
+        action_cands = self.agent.filter_action_cands(infos["admissible_commands"])
         while True:
             for sampled in sample():
                 if sampled is None:
                     continue
                 yield sampled
 
-            if all(prev_dones):
+            if all(dones):
                 # if all the previous episodes are done, we can stop
                 break
 
-            # clean observations
-            obs = self.agent.preprocessor.batch_clean(raw_obs)
-
-            # filter action cands
-            action_cands = self.agent.filter_action_cands(infos["admissible_commands"])
             results = self.agent.calculate_action_scores(
                 obs,
                 action_cands,
                 prev_actions=prev_actions,
                 rnn_prev_hidden=rnn_prev_hidden,
             )
-            curr_graph = results["curr_graph"].cpu()
 
             # select actions randomly
             actions_idx = action_select_fn(
@@ -844,36 +869,40 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             )
 
             # take a step
-            prev_actions = self.agent.decode_actions(action_cands, actions_idx)
-            raw_obs, cum_rewards, dones, infos = self.train_env.step(prev_actions)
+            actions = self.agent.decode_actions(action_cands, actions_idx)
+            next_raw_obs, cum_rewards, dones, next_infos = self.train_env.step(actions)
 
-            # if we took a step before, add a transition
-            if prev_actions is not None:
-                # add the previous transition to the cache
-                transition_cache.batch_add(
-                    prev_obs,
-                    prev_action_cands,
-                    prev_graph,
-                    prev_actions_idx,
-                    prev_cum_rewards,
-                    prev_step_rewards,
-                    prev_dones,
-                    obs,
-                    action_cands,
-                    curr_graph,
-                )
+            # clean next observations
+            next_obs = self.agent.preprocessor.batch_clean(next_raw_obs)
 
-            # set up the next step
-            # first save the previous state
-            prev_obs = obs
-            prev_action_cands = action_cands
-            prev_graph = curr_graph
-            prev_actions_idx = actions_idx
-            prev_step_rewards = [
+            # filter next action cands
+            next_action_cands = self.agent.filter_action_cands(
+                next_infos["admissible_commands"]
+            )
+
+            # calculate step rewards
+            step_rewards = [
                 curr - prev for prev, curr in zip(prev_cum_rewards, cum_rewards)
             ]
-            prev_cum_rewards = cum_rewards
-            prev_dones = dones
+
+            # add the previous transition to the cache
+            transition_cache.batch_add(
+                obs,
+                prev_actions,
+                rnn_prev_hidden,
+                action_cands,
+                actions_idx,
+                cum_rewards,
+                step_rewards,
+                next_obs,
+                next_action_cands,
+                dones,
+            )
+
+            # set up the next step
+            obs = next_obs
+            action_cands = next_action_cands
+            prev_actions = actions
             rnn_prev_hidden = results["rnn_curr_hidden"]
             episode_end_fn()
 
@@ -904,22 +933,24 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def prepare_batch(self, transitions: List[Transition]) -> Dict[str, torch.Tensor]:
         obs: List[str] = []
+        prev_actions: List[str] = []
+        rnn_prev_hiddens: List[torch.Tensor] = []
         action_cands: List[List[str]] = []
-        curr_graphs: List[torch.Tensor] = []
         actions_idx: List[int] = []
+        curr_actions: List[str] = []
         rewards: List[float] = []
         next_obs: List[str] = []
         next_action_cands: List[List[str]] = []
-        next_graphs: List[torch.Tensor] = []
         for transition in transitions:
             obs.append(transition.ob)
+            prev_actions.append(transition.prev_action)
+            rnn_prev_hiddens.append(transition.rnn_prev_hidden)
             action_cands.append(transition.action_cands)
-            curr_graphs.append(transition.current_graph)
             actions_idx.append(transition.action_id)
+            curr_actions.append(transition.action_cands[transition.action_id])
             rewards.append(transition.step_reward)
             next_obs.append(transition.next_ob)
             next_action_cands.append(transition.next_action_cands)
-            next_graphs.append(transition.next_graph)
 
         # preprocess
         obs_word_ids, obs_mask = self.agent.preprocessor.preprocess(obs)
@@ -928,6 +959,12 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             action_cand_mask,
             action_mask,
         ) = self.agent.preprocess_action_cands(action_cands)
+        prev_action_word_ids, prev_action_mask = self.agent.preprocessor.preprocess(
+            prev_actions
+        )
+        curr_action_word_ids, curr_action_mask = self.agent.preprocessor.preprocess(
+            curr_actions
+        )
         next_obs_word_ids, next_obs_mask = self.agent.preprocessor.preprocess(next_obs)
         (
             next_action_cand_word_ids,
@@ -938,15 +975,18 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         return {
             "obs_word_ids": obs_word_ids,
             "obs_mask": obs_mask,
-            "current_graph": torch.stack(curr_graphs),
+            "prev_action_word_ids": prev_action_word_ids,
+            "prev_action_mask": prev_action_mask,
+            "rnn_prev_hidden": torch.stack(rnn_prev_hiddens),
             "action_cand_word_ids": action_cand_word_ids,
             "action_cand_mask": action_cand_mask,
             "action_mask": action_mask,
             "actions_idx": torch.tensor(actions_idx),
             "rewards": torch.tensor(rewards),
+            "curr_action_word_ids": curr_action_word_ids,
+            "curr_action_mask": curr_action_mask,
             "next_obs_word_ids": next_obs_word_ids,
             "next_obs_mask": next_obs_mask,
-            "next_graph": torch.stack(next_graphs),
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
             "next_action_mask": next_action_mask,
