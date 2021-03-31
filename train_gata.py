@@ -664,13 +664,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 lambda c: isinstance(c, EqualModelCheckpoint), self.trainer.callbacks
             )
         )
-        if (
-            val_model_ckpt.best_model_score is None
-            and train_model_ckpt.best_model_score is None
-        ):
-            # we haven't collected any metrics yet, so just return
-            return
-        if val_model_ckpt.best_model_score > 0:
+        if val_model_ckpt.best_model_score is not None:
+            # val_avg_game_normalized_rewards > 0 since something has been saved.
             val_current_score = self.trainer.logger_connector.callback_metrics[
                 "val_avg_game_normalized_rewards"
             ]
@@ -678,7 +673,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 self.ckpt_patience_count += 1
             else:
                 self.ckpt_patience_count = 0
-        else:
+        elif train_model_ckpt.best_model_score is not None:
             train_current_score = self.trainer.logger_connector.callback_metrics[
                 "train_avg_game_normalized_rewards"
             ]
@@ -688,10 +683,11 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 self.ckpt_patience_count = 0
         if self.ckpt_patience_count >= self.hparams.ckpt_patience:  # type: ignore
             # reload the best checkpoint
-            if val_model_ckpt.best_model_score > 0:
+            if val_model_ckpt.best_model_score is not None:
                 self.print("patience ran out. loading from best validation checkpoint")
                 state_dict = torch.load(val_model_ckpt.best_model_path)["state_dict"]
             else:
+                # we can assume that train_model_ckpt.best_model_score is not None here
                 self.print("patience ran out. loading from best training checkpoint")
                 state_dict = torch.load(train_model_ckpt.best_model_path)["state_dict"]
             self.load_state_dict(state_dict)
@@ -997,6 +993,18 @@ class EqualModelCheckpoint(ModelCheckpoint):
         return should_update_best_and_save  # type: ignore
 
 
+class EqualNonZeroModelCheckpoint(EqualModelCheckpoint):
+    def check_monitor_top_k(
+        self, trainer, current: Optional[torch.Tensor] = None
+    ) -> bool:
+        """
+        If current is 0, don't save
+        """
+        if current is not None and current == 0:
+            return False
+        return super().check_monitor_top_k(trainer, current=current)
+
+
 @hydra.main(config_path="train_gata_conf", config_name="config")
 def main(cfg: DictConfig) -> None:
     print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
@@ -1019,7 +1027,7 @@ def main(cfg: DictConfig) -> None:
         # we need to pass in the validation model checkpoint last
         # the train model checkpoint won't really be used
         # after the validation metrics goes over 0.
-        EqualModelCheckpoint(
+        EqualNonZeroModelCheckpoint(
             monitor="val_avg_game_normalized_rewards",
             mode="max",
             filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
