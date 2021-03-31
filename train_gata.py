@@ -718,7 +718,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def test_dataloader(self) -> DataLoader:
         return DataLoader(
-            RLEvalDataset(len(self.val_env.gamefiles)),
+            RLEvalDataset(len(self.test_env.gamefiles)),
             batch_size=self.hparams.eval_game_batch_size,  # type: ignore
         )
 
