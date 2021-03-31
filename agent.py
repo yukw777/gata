@@ -280,9 +280,8 @@ class EpsilonGreedyAgent(Agent):
         Update the epsilon value linearly based on the current step
         """
         slope = (
-            -(self.epsilon_anneal_from - self.epsilon_anneal_to)
-            / self.epsilon_anneal_episodes
-        )
+            self.epsilon_anneal_to - self.epsilon_anneal_from
+        ) / self.epsilon_anneal_episodes
         self.epsilon = max(
             self.epsilon_anneal_to, step * slope + self.epsilon_anneal_from
         )

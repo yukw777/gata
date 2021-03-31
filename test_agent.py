@@ -338,6 +338,25 @@ def test_update_epsilon(
     eps_greedy_agent.update_epsilon(epsilon_anneal_episodes + 10)
     assert eps_greedy_agent.epsilon == epsilon_anneal_to
 
+    # if step is 1, equal to one step down from epsilon_anneal_from
+    eps_greedy_agent.update_epsilon(1)
+    assert (
+        eps_greedy_agent.epsilon
+        == epsilon_anneal_from
+        - (eps_greedy_agent.epsilon_anneal_from - eps_greedy_agent.epsilon_anneal_to)
+        / eps_greedy_agent.epsilon_anneal_episodes
+    )
+
+    # if step is epsilon_anneal_episodes - 1,
+    # equal to one step up from epsilon_anneal_to
+    eps_greedy_agent.update_epsilon(epsilon_anneal_episodes - 1)
+    assert (
+        pytest.approx(eps_greedy_agent.epsilon)
+        == epsilon_anneal_to
+        + (eps_greedy_agent.epsilon_anneal_from - eps_greedy_agent.epsilon_anneal_to)
+        / eps_greedy_agent.epsilon_anneal_episodes
+    )
+
     # if step is in the middle, epsilon should be the mean of from and to
     eps_greedy_agent.update_epsilon(epsilon_anneal_episodes // 2)
     assert eps_greedy_agent.epsilon == pytest.approx(
