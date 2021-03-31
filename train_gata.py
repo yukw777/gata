@@ -1008,28 +1008,26 @@ def main(cfg: DictConfig) -> None:
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
     assert isinstance(trainer_config, dict)
     trainer_config["logger"] = instantiate(cfg.logger) if "logger" in cfg else True
+    trainer_config["callbacks"] = [
+        EqualModelCheckpoint(
+            monitor="train_avg_game_normalized_rewards",
+            mode="max",
+            filename="{epoch}-{step}-{train_avg_game_normalized_rewards:.2f}",
+        ),
+        # because of a bug:
+        # https://github.com/PyTorchLightning/pytorch-lightning/issues/6467
+        # we need to pass in the validation model checkpoint last
+        # the train model checkpoint won't really be used
+        # after the validation metrics goes over 0.
+        EqualModelCheckpoint(
+            monitor="val_avg_game_normalized_rewards",
+            mode="max",
+            filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
+        ),
+    ]
     if isinstance(trainer_config["logger"], WandbLogger):
         trainer_config["callbacks"] = [WandbSaveCallback()]
-    trainer = pl.Trainer(
-        **trainer_config,
-        callbacks=[
-            EqualModelCheckpoint(
-                monitor="train_avg_game_normalized_rewards",
-                mode="max",
-                filename="{epoch}-{step}-{train_avg_game_normalized_rewards:.2f}",
-            ),
-            # because of a bug:
-            # https://github.com/PyTorchLightning/pytorch-lightning/issues/6467
-            # we need to pass in the validation model checkpoint last
-            # the train model checkpoint won't really be used
-            # after the validation metrics goes over 0.
-            EqualModelCheckpoint(
-                monitor="val_avg_game_normalized_rewards",
-                mode="max",
-                filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
-            ),
-        ],
-    )
+    trainer = pl.Trainer(**trainer_config)
 
     # instantiate the lightning module
     lm_model_config = OmegaConf.to_container(cfg.model, resolve=True)
