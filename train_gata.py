@@ -18,7 +18,6 @@ from typing import (
     Dict,
     List,
     Iterator,
-    Deque,
     Callable,
     Iterable,
     Generator,
@@ -26,7 +25,6 @@ from typing import (
 )
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader, Dataset
-from collections import deque
 
 from utils import load_textworld_games, WandbSaveCallback
 from layers import WordNodeRelInitMixin
@@ -460,7 +458,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
         # replay buffer
-        self.buffer: Deque[Transition] = deque(maxlen=replay_buffer_capacity)
+        self.buffer: List[Transition] = []
+        self.buffer_capacity = replay_buffer_capacity
+        self.buffer_next_id = 0
 
         # bookkeeping
         self.total_episode_steps = 0
@@ -929,7 +929,19 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 >= buffer_avg_reward
                 * self.hparams.replay_buffer_reward_threshold  # type: ignore
             ):
-                self.buffer.extend(transitions)
+                self.extend_limited_list(transitions)
+
+    def extend_limited_list(self, transitions: List[Transition]) -> None:
+        for t in transitions:
+            # loop around if out of space
+            buffer_len = len(self.buffer)
+            if buffer_len < self.buffer_capacity:
+                self.buffer.append(t)
+            else:
+                self.buffer[self.buffer_next_id] = t
+
+            self.buffer_next_id += 1
+            self.buffer_next_id %= self.buffer_capacity
 
     def prepare_batch(self, transitions: List[Transition]) -> Dict[str, torch.Tensor]:
         obs: List[str] = []

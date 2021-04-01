@@ -489,6 +489,32 @@ def test_gata_double_dqn_push_to_buffer(
     assert replay_buffer_gata_double_dqn.buffer == expected_buffer
 
 
+def test_gata_double_dqn_extend_limited_list(replay_buffer_gata_double_dqn):
+    replay_buffer_gata_double_dqn.extend_limited_list(
+        [Transition(ob=str(i)) for i in range(10)]
+    )
+    assert len(replay_buffer_gata_double_dqn.buffer) == 10
+    assert replay_buffer_gata_double_dqn.buffer_next_id == 10
+    for i in range(10):
+        assert replay_buffer_gata_double_dqn.buffer[i].ob == str(i)
+
+    replay_buffer_gata_double_dqn.extend_limited_list(
+        [Transition(ob=str(i)) for i in range(10, 20)]
+    )
+    assert len(replay_buffer_gata_double_dqn.buffer) == 20
+    assert replay_buffer_gata_double_dqn.buffer_next_id == 0
+    for i in range(10, 20):
+        assert replay_buffer_gata_double_dqn.buffer[i].ob == str(i)
+
+    replay_buffer_gata_double_dqn.extend_limited_list(
+        [Transition(ob=str(i)) for i in range(20, 30)]
+    )
+    assert len(replay_buffer_gata_double_dqn.buffer) == 20
+    assert replay_buffer_gata_double_dqn.buffer_next_id == 10
+    for i in range(20, 30):
+        assert replay_buffer_gata_double_dqn.buffer[i % 20].ob == str(i)
+
+
 def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
     replay_buffer_gata_double_dqn.buffer = deque(
         [
