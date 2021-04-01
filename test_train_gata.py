@@ -2,6 +2,7 @@ import pytest
 import torch
 import torch.nn as nn
 import random
+import itertools
 
 from collections import deque
 from hydra.experimental import initialize, compose
@@ -619,6 +620,33 @@ def test_gata_double_dqn_populate_replay_buffer(replay_buffer_gata_double_dqn):
     assert len(replay_buffer_gata_double_dqn.buffer) == 0
     replay_buffer_gata_double_dqn.populate_replay_buffer()
     assert len(replay_buffer_gata_double_dqn.buffer) > 0
+    # make sure everyhing is sequential
+    a, b = itertools.tee(replay_buffer_gata_double_dqn.buffer)
+    next(b, None)
+    for prev_t, curr_t in zip(a, b):
+        if prev_t.done:
+            # different game started, so skip
+            continue
+        # ob should be the same as previous next_ob
+        assert curr_t.ob == prev_t.next_ob
+
+        # prev_action should be the same as the selected action
+        # from previous transition
+        assert curr_t.prev_action == prev_t.action_cands[prev_t.action_id]
+
+        # rnn_prev_hidden should be the right size
+        assert prev_t.rnn_prev_hidden.size() == (
+            replay_buffer_gata_double_dqn.hparams.hidden_dim,
+        )
+        assert curr_t.rnn_prev_hidden.size() == (
+            replay_buffer_gata_double_dqn.hparams.hidden_dim,
+        )
+
+        # action_cands should be same as the previous next_action_cands
+        assert curr_t.action_cands == prev_t.next_action_cands
+
+        # cum_reward should be previous cum_reward + current step_reward
+        assert curr_t.cum_reward == prev_t.cum_reward + curr_t.step_reward
 
 
 def test_rl_early_stopping(replay_buffer_gata_double_dqn):

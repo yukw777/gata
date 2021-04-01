@@ -834,12 +834,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             device=self.device,
         )
         prev_actions: List[str] = ["restart"] * self.train_env.batch_size
-        # prev_obs: List[str] = []
-        # prev_action_cands: List[List[str]] = []
-        # prev_graph: torch.Tensor = torch.empty(0)
-        # prev_actions_idx: List[int] = []
-        prev_cum_rewards: List[float] = [0.0] * self.train_env.batch_size
-        # prev_step_rewards: List[float] = []
+        prev_cum_rewards: List[int] = [0] * self.train_env.batch_size
         dones: List[bool] = [False] * self.train_env.batch_size
 
         raw_obs, infos = self.train_env.reset()
@@ -904,6 +899,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             obs = next_obs
             action_cands = next_action_cands
             prev_actions = actions
+            prev_cum_rewards = cum_rewards
             rnn_prev_hidden = results["rnn_curr_hidden"]
             episode_end_fn()
 
