@@ -673,3 +673,19 @@ def test_main(tmp_path):
             ],
         )
         main(cfg)
+
+
+def test_main_test_only(tmp_path):
+    with initialize(config_path="train_gata_conf"):
+        cfg = compose(
+            config_name="config",
+            overrides=[
+                "data.eval_max_episode_steps=5",
+                "data.eval_game_batch_size=3",
+                "eval.test_only=true",
+                "eval.checkpoint_path=test-data/test-gata.ckpt",
+                f"+pl_trainer.default_root_dir={tmp_path}",
+                "+pl_trainer.limit_test_batches=1",
+            ],
+        )
+        main(cfg)

@@ -7,6 +7,7 @@ import hydra
 import itertools
 import gym
 
+from urllib.parse import urlparse
 from omegaconf import DictConfig, OmegaConf
 from hydra.utils import instantiate, to_absolute_path
 from pytorch_lightning.callbacks import ModelCheckpoint, Callback
@@ -1178,26 +1179,43 @@ def main(cfg: DictConfig) -> None:
     trainer = pl.Trainer(**trainer_config)
 
     # instantiate the lightning module
-    lm_model_config = OmegaConf.to_container(cfg.model, resolve=True)
-    assert isinstance(lm_model_config, dict)
-    if cfg.model.pretrained_graph_updater is not None:
-        graph_updater_obs_gen = GraphUpdaterObsGen.load_from_checkpoint(
-            to_absolute_path(cfg.model.pretrained_graph_updater.ckpt_path),
-            word_vocab_path=cfg.model.pretrained_graph_updater.word_vocab_path,
-            node_vocab_path=cfg.model.pretrained_graph_updater.node_vocab_path,
-            relation_vocab_path=cfg.model.pretrained_graph_updater.relation_vocab_path,
-        )
-        lm_model_config[
-            "pretrained_graph_updater"
-        ] = graph_updater_obs_gen.graph_updater
-    lm = GATADoubleDQN(**lm_model_config, **cfg.train, **cfg.data)
-    lm.seed_envs(42)
+    if not cfg.eval.test_only:
+        lm_model_config = OmegaConf.to_container(cfg.model, resolve=True)
+        assert isinstance(lm_model_config, dict)
+        if cfg.model.pretrained_graph_updater is not None:
+            graph_updater_obs_gen = GraphUpdaterObsGen.load_from_checkpoint(
+                to_absolute_path(cfg.model.pretrained_graph_updater.ckpt_path),
+                word_vocab_path=cfg.model.pretrained_graph_updater.word_vocab_path,
+                node_vocab_path=cfg.model.pretrained_graph_updater.node_vocab_path,
+                relation_vocab_path=(
+                    cfg.model.pretrained_graph_updater.relation_vocab_path
+                ),
+            )
+            lm_model_config[
+                "pretrained_graph_updater"
+            ] = graph_updater_obs_gen.graph_updater
+        lm = GATADoubleDQN(**lm_model_config, **cfg.train, **cfg.data)
+        lm.seed_envs(42)
 
-    # fit
-    trainer.fit(lm)
+        # fit
+        trainer.fit(lm)
 
-    # test
-    trainer.test()
+        # test
+        trainer.test()
+    else:
+        assert (
+            cfg.eval.checkpoint_path is not None
+        ), "missing checkpoint path for testing"
+        parsed = urlparse(cfg.eval.checkpoint_path)
+        if parsed.scheme == "":
+            # local path
+            ckpt_path = to_absolute_path(cfg.eval.checkpoint_path)
+        else:
+            # remote path
+            ckpt_path = cfg.eval.checkpoint_path
+
+        model = GATADoubleDQN.load_from_checkpoint(ckpt_path, **cfg.data)
+        trainer.test(model=model)
 
 
 if __name__ == "__main__":
