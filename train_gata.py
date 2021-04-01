@@ -21,7 +21,6 @@ from typing import (
     Iterator,
     Callable,
     Iterable,
-    Generator,
     Any,
 )
 from textworld import EnvInfos
@@ -199,6 +198,97 @@ class ReplayBufferDataset(IterableDataset):
         return self.generate_batch()
 
 
+class ReplayBuffer:
+    """
+    Prioritized Experience Replay Buffer is based on
+    PERBuffer from PyTorch Lightning Bolts.
+    """
+
+    def __init__(
+        self,
+        capacity: int,
+        reward_threshold: float,
+        sample_batch_size: int,
+        eps: float,
+        alpha: float,
+        beta_from: float,
+        beta_frames: int,
+    ):
+        self.capacity = capacity
+        self.reward_threshold = reward_threshold
+        self.sample_batch_size = sample_batch_size
+        self.eps = eps
+        self.alpha = alpha
+        self.beta_from = beta_from
+        self.beta_frames = beta_frames
+        self.beta = beta_from
+
+        self.buffer: List[Transition] = []
+        self.buffer_next_id = 0
+        self.priorities = np.zeros((capacity,), dtype=np.float32)
+
+    def update_beta(self, step: int) -> None:
+        slope = (1.0 - self.beta_from) / self.beta_frames
+        self.beta = min(1.0, self.beta_from + step * slope)
+
+    def push(self, t_cache: TransitionCache) -> None:
+        buffer_avg_reward = 0.0
+        if len(self.buffer) > 0:
+            buffer_avg_reward = np.mean(  # type: ignore
+                [transition.step_reward for transition in self.buffer]
+            )
+        for avg_reward, transitions in zip(t_cache.get_avg_rewards(), t_cache.cache):
+            if avg_reward >= buffer_avg_reward * self.reward_threshold:
+                self._extend_limited_list(transitions)
+
+    def _extend_limited_list(self, transitions: List[Transition]) -> None:
+        for t in transitions:
+            # get the max priority before adding
+            max_prio = self.priorities.max() if self.buffer else 1.0
+
+            if len(self.buffer) < self.capacity:
+                self.buffer.append(t)
+            else:
+                self.buffer[self.buffer_next_id] = t
+
+            # set the priority to the max so that it will resampled soon
+            self.priorities[self.buffer_next_id] = max_prio
+
+            self.buffer_next_id += 1
+            self.buffer_next_id %= self.capacity
+
+    def sample(self) -> Dict[str, Any]:
+        if len(self.buffer) == self.capacity:
+            prios = self.priorities
+        else:
+            prios = self.priorities[: self.buffer_next_id]
+
+        # alpha determines the level of prioritization
+        # 0 = no prioritization
+        probs = prios ** self.alpha
+        probs /= probs.sum()
+
+        # sample indices based on probs
+        indices = np.random.choice(
+            len(self.buffer), self.sample_batch_size, p=probs, replace=False
+        )
+        samples = [self.buffer[i] for i in indices]
+
+        # weight of each sample to compensate for the bias added in
+        # with prioritising samples
+        weights = (len(self.buffer) * probs[indices]) ** (-self.beta)
+        weights /= weights.max()
+
+        # return the samples, the indices chosen and the weight of each sample
+        return {"samples": samples, "indices": indices, "weights": weights.tolist()}
+
+    def update_priorities(
+        self, batch_idx: List[int], batch_priorities: List[float]
+    ) -> None:
+        for i, prio in zip(batch_idx, batch_priorities):
+            self.priorities[i] = prio + self.eps
+
+
 class RLEvalDataset(Dataset):
     """
     A dummy dataset for reinforcement learning evaluation.
@@ -228,6 +318,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         replay_buffer_capacity: int = 500000,
         replay_buffer_populate_episodes: int = 100,
         replay_buffer_reward_threshold: float = 0.1,
+        replay_buffer_eps: float = 1e-6,
+        replay_buffer_alpha: float = 0.6,
+        replay_buffer_beta_from: float = 0.4,
+        replay_buffer_beta_frames: int = 100000,
         train_sample_batch_size: int = 64,
         learning_rate: float = 1e-3,
         target_net_update_frequency: int = 500,
@@ -265,6 +359,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "replay_buffer_capacity",
             "replay_buffer_populate_episodes",
             "replay_buffer_reward_threshold",
+            "replay_buffer_eps",
+            "replay_buffer_alpha",
+            "replay_buffer_beta_from",
+            "replay_buffer_beta_frames",
             "train_sample_batch_size",
             "learning_rate",
             "target_net_update_frequency",
@@ -446,7 +544,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             param.requires_grad = False
 
         # loss
-        self.smooth_l1_loss = nn.SmoothL1Loss()
+        self.smooth_l1_loss = nn.SmoothL1Loss(reduction="none")
 
         # agent
         self.agent = EpsilonGreedyAgent(
@@ -459,9 +557,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
         # replay buffer
-        self.buffer: List[Transition] = []
-        self.buffer_capacity = replay_buffer_capacity
-        self.buffer_next_id = 0
+        self.replay_buffer = ReplayBuffer(
+            replay_buffer_capacity,
+            replay_buffer_reward_threshold,
+            train_sample_batch_size,
+            replay_buffer_eps,
+            replay_buffer_alpha,
+            replay_buffer_beta_from,
+            replay_buffer_beta_frames,
+        )
 
         # bookkeeping
         self.total_episode_steps = 0
@@ -551,7 +655,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
     def training_step(  # type: ignore
-        self, batch: Dict[str, torch.Tensor], batch_idx: int
+        self, batch: Dict[str, Any], batch_idx: int
     ) -> torch.Tensor:
         # double deep q learning
 
@@ -595,16 +699,24 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 batch["next_action_cand_mask"],
                 batch["next_action_mask"],
             )
+            # Note: no need to mask the next Q values as
+            # "done" states are not even added to the replay buffer
             next_q_values = self.get_q_values(
                 next_tgt_action_scores, batch["next_action_mask"], next_actions_idx
             )
-        # TODO: loss calculation and updates for prioritized experience replay
-        # Note: no need to mask the next Q values as "done" states are not even added
-        # to the replay buffer
-        loss = self.smooth_l1_loss(
-            q_values,
+
+        target_q_values = (
             batch["rewards"]
-            + next_q_values * self.hparams.reward_discount,  # type: ignore
+            + next_q_values * self.hparams.reward_discount  # type: ignore
+        )
+
+        # update priorities for the replay buffer
+        abs_td_error = torch.abs(q_values - target_q_values)
+        self.replay_buffer.update_priorities(batch["indices"], abs_td_error.tolist())
+
+        # calculate loss
+        loss = torch.mean(
+            batch["weights"] * self.smooth_l1_loss(q_values, target_q_values)
         )
         self.log_dict(
             {
@@ -735,9 +847,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def train_dataloader(self) -> DataLoader:
         self.populate_replay_buffer()
-        return DataLoader(
+        return DataLoader(  # type: ignore
             ReplayBufferDataset(self.gen_train_batch),
-            batch_size=self.hparams.train_sample_batch_size,  # type: ignore
+            # disable automatic batching as it's done in the replay buffer
+            batch_size=None,
             collate_fn=self.prepare_batch,
         )
 
@@ -759,9 +872,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
     def populate_replay_buffer(self) -> None:
         episodes_played = 0
 
-        # we don't want to sample, so just yield None
-        def sample() -> Generator[Optional[Transition], None, None]:
-            yield None
+        # we don't want to sample, so just return None
+        def sample() -> Optional[Dict[str, Any]]:
+            return None
 
         def act_random(_: torch.Tensor, action_mask: torch.Tensor) -> List[int]:
             return self.agent.select_random(action_mask).tolist()
@@ -778,7 +891,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 pass
             episodes_played += self.train_env.batch_size
 
-    def gen_train_batch(self) -> Iterator[Transition]:
+    def gen_train_batch(self) -> Iterator[Dict[str, Any]]:
         """
         Generate train batches by playing multiple episodes in parallel.
         Generation stops when all the parallel episodes are done.
@@ -786,15 +899,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         This means that one epoch = self.train_env.batch_size episodes
         """
 
-        def sample() -> Generator[Optional[Transition], None, None]:
+        def sample() -> Optional[Dict[str, Any]]:
             if (
                 self.total_episode_steps
                 % self.hparams.training_step_freq  # type: ignore
                 == 0
             ):
-                # if we've played enough episodes to learn and we're at the
-                # yield frequency, yield a batch
-                yield from self.sample()
+                # return a sample if we're at the training step frequency
+                return self.replay_buffer.sample()
+            return None
 
         def act_epsilon_greedy(
             action_scores: torch.Tensor, action_mask: torch.Tensor
@@ -820,10 +933,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
     def play_episodes(
         self,
-        sample: Callable[[], Generator[Optional[Transition], None, None]],
+        sample: Callable[[], Optional[Dict[str, Any]]],
         action_select_fn: Callable[[torch.Tensor, torch.Tensor], List[int]],
         episode_end_fn: Callable[[], None],
-    ) -> Iterator[Transition]:
+    ) -> Iterator[Dict[str, Any]]:
         transition_cache = TransitionCache(self.train_env.batch_size)
         # in order to avoid having to deal with None, just start with zeros
         # this is OK, b/c Graph Updater already initializes rnn_prev_hidden
@@ -843,9 +956,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         # filter action cands
         action_cands = self.agent.filter_action_cands(infos["admissible_commands"])
         while True:
-            for sampled in sample():
-                if sampled is None:
-                    continue
+            sampled = sample()
+            if sampled is not None:
                 yield sampled
 
             if all(dones):
@@ -904,7 +1016,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             episode_end_fn()
 
         # push transitions into the buffer
-        self.push_to_buffer(transition_cache)
+        self.replay_buffer.push(transition_cache)
 
         # collect metrics
         self.game_rewards = transition_cache.get_game_rewards()
@@ -914,33 +1026,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         ]
         self.game_steps = transition_cache.get_game_steps()
 
-    def push_to_buffer(self, t_cache: TransitionCache) -> None:
-        buffer_avg_reward = 0.0
-        if len(self.buffer) > 0:
-            buffer_avg_reward = np.mean(  # type: ignore
-                [transition.step_reward for transition in self.buffer]
-            )
-        for avg_reward, transitions in zip(t_cache.get_avg_rewards(), t_cache.cache):
-            if (
-                avg_reward
-                >= buffer_avg_reward
-                * self.hparams.replay_buffer_reward_threshold  # type: ignore
-            ):
-                self.extend_limited_list(transitions)
-
-    def extend_limited_list(self, transitions: List[Transition]) -> None:
-        for t in transitions:
-            # loop around if out of space
-            buffer_len = len(self.buffer)
-            if buffer_len < self.buffer_capacity:
-                self.buffer.append(t)
-            else:
-                self.buffer[self.buffer_next_id] = t
-
-            self.buffer_next_id += 1
-            self.buffer_next_id %= self.buffer_capacity
-
-    def prepare_batch(self, transitions: List[Transition]) -> Dict[str, torch.Tensor]:
+    def prepare_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         obs: List[str] = []
         prev_actions: List[str] = []
         rnn_prev_hiddens: List[torch.Tensor] = []
@@ -950,7 +1036,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         rewards: List[float] = []
         next_obs: List[str] = []
         next_action_cands: List[List[str]] = []
-        for transition in transitions:
+        for transition in batch["samples"]:
             obs.append(transition.ob)
             prev_actions.append(transition.prev_action)
             rnn_prev_hiddens.append(transition.rnn_prev_hidden)
@@ -999,15 +1085,9 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
             "next_action_mask": next_action_mask,
+            "weights": torch.tensor(batch["weights"]),
+            "indices": batch["indices"],
         }
-
-    def sample(self) -> Iterator[Transition]:
-        for idx in np.random.choice(
-            len(self.buffer),
-            size=self.hparams.train_sample_batch_size,  # type: ignore
-            replace=False,
-        ):
-            yield self.buffer[idx]
 
 
 class EqualModelCheckpoint(ModelCheckpoint):

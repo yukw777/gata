@@ -4,7 +4,6 @@ import torch.nn as nn
 import random
 import itertools
 
-from collections import deque
 from hydra.experimental import initialize, compose
 from pytorch_lightning import Trainer
 
@@ -16,6 +15,7 @@ from train_gata import (
     TransitionCache,
     Transition,
     RLEarlyStopping,
+    ReplayBuffer,
     main,
 )
 from agent import EpsilonGreedyAgent
@@ -237,6 +237,7 @@ def test_gata_double_dqn_get_q_values(
     ],
 )
 def test_gata_double_dqn_training_step(
+    replay_buffer_gata_double_dqn,
     batch_size,
     obs_len,
     prev_action_len,
@@ -244,10 +245,9 @@ def test_gata_double_dqn_training_step(
     num_action_cands,
     action_cand_len,
 ):
-    gata_ddqn = GATADoubleDQN()
     # Note: batch_idx is not used
     assert (
-        gata_ddqn.training_step(
+        replay_buffer_gata_double_dqn.training_step(
             {
                 "obs_word_ids": torch.randint(4, (batch_size, obs_len)),
                 "obs_mask": torch.randint(2, (batch_size, obs_len), dtype=torch.float),
@@ -255,7 +255,9 @@ def test_gata_double_dqn_training_step(
                 "prev_action_mask": torch.randint(
                     2, (batch_size, prev_action_len), dtype=torch.float
                 ),
-                "rnn_prev_hidden": torch.rand(batch_size, gata_ddqn.hparams.hidden_dim),
+                "rnn_prev_hidden": torch.rand(
+                    batch_size, replay_buffer_gata_double_dqn.hparams.hidden_dim
+                ),
                 "action_cand_word_ids": torch.randint(
                     4, (batch_size, num_action_cands, action_cand_len)
                 ),
@@ -288,11 +290,17 @@ def test_gata_double_dqn_training_step(
                 "next_action_mask": torch.randint(
                     2, (batch_size, num_action_cands), dtype=torch.float
                 ),
+                "weights": torch.rand(batch_size),
+                "indices": list(range(batch_size)),
             },
             0,
         ).ndimension()
         == 0
     )
+
+    # make sure priorities are updated
+    for prio in replay_buffer_gata_double_dqn.replay_buffer.priorities[:batch_size]:
+        assert prio != 0
 
 
 def test_transition_cache_batch_add():
@@ -455,70 +463,154 @@ def replay_buffer_gata_double_dqn():
     )
 
 
+@pytest.fixture
+def replay_buffer():
+    return ReplayBuffer(20, 0.1, 4, 1e-6, 0.6, 0.4, 100000)
+
+
 @pytest.mark.parametrize(
     "initial_buffer,batch_transitions,expected_buffer",
     [
         (
-            deque(),
+            [],
             [[Transition(cum_reward=1)], [Transition(cum_reward=1)]],
-            deque([Transition(cum_reward=1), Transition(cum_reward=1)]),
+            [Transition(cum_reward=1), Transition(cum_reward=1)],
         ),
         (
-            deque([Transition(step_reward=2), Transition(step_reward=1)]),
+            [Transition(step_reward=2), Transition(step_reward=1)],
             [
                 [Transition(cum_reward=2), Transition(cum_reward=3)],
                 [Transition(cum_reward=0)],
             ],
-            deque(
-                [
-                    Transition(step_reward=2),
-                    Transition(step_reward=1),
-                    Transition(cum_reward=2),
-                    Transition(cum_reward=3),
-                ]
-            ),
+            [
+                Transition(step_reward=2),
+                Transition(step_reward=1),
+                Transition(cum_reward=2),
+                Transition(cum_reward=3),
+            ],
         ),
     ],
 )
-def test_gata_double_dqn_push_to_buffer(
-    replay_buffer_gata_double_dqn, initial_buffer, batch_transitions, expected_buffer
+def test_replay_buffer_push(
+    replay_buffer, initial_buffer, batch_transitions, expected_buffer
 ):
-    replay_buffer_gata_double_dqn.buffer = initial_buffer
+    replay_buffer.buffer = initial_buffer
     t_cache = TransitionCache(0)
     t_cache.cache = batch_transitions
-    replay_buffer_gata_double_dqn.push_to_buffer(t_cache)
-    assert replay_buffer_gata_double_dqn.buffer == expected_buffer
+    replay_buffer.push(t_cache)
+    assert replay_buffer.buffer == expected_buffer
 
 
-def test_gata_double_dqn_extend_limited_list(replay_buffer_gata_double_dqn):
-    replay_buffer_gata_double_dqn.extend_limited_list(
-        [Transition(ob=str(i)) for i in range(10)]
-    )
-    assert len(replay_buffer_gata_double_dqn.buffer) == 10
-    assert replay_buffer_gata_double_dqn.buffer_next_id == 10
+def test_replay_buffer_extend_limited_list(replay_buffer):
+    replay_buffer._extend_limited_list([Transition(ob=str(i)) for i in range(10)])
+    assert len(replay_buffer.buffer) == 10
+    assert replay_buffer.buffer_next_id == 10
     for i in range(10):
-        assert replay_buffer_gata_double_dqn.buffer[i].ob == str(i)
+        assert replay_buffer.buffer[i].ob == str(i)
+        assert replay_buffer.priorities[i] == 1.0
+        # mess with the priorities
+        replay_buffer.priorities[i] = i / 20
 
-    replay_buffer_gata_double_dqn.extend_limited_list(
-        [Transition(ob=str(i)) for i in range(10, 20)]
-    )
-    assert len(replay_buffer_gata_double_dqn.buffer) == 20
-    assert replay_buffer_gata_double_dqn.buffer_next_id == 0
+    replay_buffer._extend_limited_list([Transition(ob=str(i)) for i in range(10, 20)])
+    assert len(replay_buffer.buffer) == 20
+    assert replay_buffer.buffer_next_id == 0
     for i in range(10, 20):
-        assert replay_buffer_gata_double_dqn.buffer[i].ob == str(i)
+        assert replay_buffer.buffer[i].ob == str(i)
+        assert pytest.approx(replay_buffer.priorities[i]) == 0.45
+        # mess with the priorities
+        replay_buffer.priorities[i] = i / 20
 
-    replay_buffer_gata_double_dqn.extend_limited_list(
-        [Transition(ob=str(i)) for i in range(20, 30)]
-    )
-    assert len(replay_buffer_gata_double_dqn.buffer) == 20
-    assert replay_buffer_gata_double_dqn.buffer_next_id == 10
+    replay_buffer._extend_limited_list([Transition(ob=str(i)) for i in range(20, 30)])
+    assert len(replay_buffer.buffer) == 20
+    assert replay_buffer.buffer_next_id == 10
     for i in range(20, 30):
-        assert replay_buffer_gata_double_dqn.buffer[i % 20].ob == str(i)
+        assert replay_buffer.buffer[i % 20].ob == str(i)
+        assert pytest.approx(replay_buffer.priorities[i % 20]) == 0.95
 
 
-def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
-    replay_buffer_gata_double_dqn.buffer = deque(
-        [
+def test_replay_buffer_sample(replay_buffer):
+    replay_buffer.buffer = [
+        Transition(
+            ob=f"{i} o",
+            prev_action=f"{i} p a",
+            rnn_prev_hidden=torch.rand(16),
+            action_cands=[f"{i} a1", f"{i} a2"],
+            action_id=random.randint(0, 1),
+            cum_reward=random.random(),
+            step_reward=random.random(),
+            next_ob=f"{i} next o",
+            next_action_cands=[f"{i} next a1", f"{i} next a2"],
+        )
+        for i in range(10)
+    ]
+    replay_buffer.buffer_next_id += 10
+
+    # mess with the priorities so that only the first four are drawn
+    replay_buffer.priorities[:4] = 1.0
+    sampled = replay_buffer.sample()
+    assert set(sampled["indices"]) == set([0, 1, 2, 3])
+    assert len(sampled["samples"]) == 4
+    for i, sample in zip(sampled["indices"], sampled["samples"]):
+        assert sample == replay_buffer.buffer[i]
+    # weights are all 1's b/c they all have the same values
+    assert sampled["weights"] == [1.0] * 4
+
+
+@pytest.mark.parametrize(
+    "beta_from,beta_frames",
+    [(0.1, 20), (0.4, 100000)],
+)
+def test_replay_buffer_update_beta(replay_buffer, beta_from, beta_frames):
+    replay_buffer.beta_from = beta_from
+    replay_buffer.beta_frames = beta_frames
+
+    # if step is 0, beta should equal beta_from
+    replay_buffer.update_beta(0)
+    assert replay_buffer.beta == beta_from
+
+    # if step is bigger than beta_frames
+    # beta should equal 1.0
+    replay_buffer.update_beta(beta_frames)
+    assert pytest.approx(replay_buffer.beta) == 1.0
+    replay_buffer.update_beta(beta_frames + 10)
+    assert replay_buffer.beta == 1.0
+
+    # if step is 1, equal to one step down from beta_from
+    replay_buffer.update_beta(1)
+    assert (
+        replay_buffer.beta
+        == beta_from - (replay_buffer.beta_from - 1.0) / replay_buffer.beta_frames
+    )
+
+    # if step is beta_frames - 1,
+    # equal to one step up from 1.0
+    replay_buffer.update_beta(beta_frames - 1)
+    assert (
+        pytest.approx(replay_buffer.beta)
+        == 1.0 + (replay_buffer.beta_from - 1.0) / replay_buffer.beta_frames
+    )
+
+    # if step is in the middle, beta should be the mean of from and 1.0
+    replay_buffer.update_beta(beta_frames // 2)
+    assert replay_buffer.beta == pytest.approx((beta_from + 1.0) / 2)
+
+
+@pytest.mark.parametrize(
+    "batch_idx,batch_prios",
+    [
+        ([19], [3.5]),
+        ([0, 4, 2, 7], [0.1, 0.2, 0.3, 0.4]),
+    ],
+)
+def test_replay_buffer_update_priorities(replay_buffer, batch_idx, batch_prios):
+    replay_buffer.update_priorities(batch_idx, batch_prios)
+    for i, prio in zip(batch_idx, batch_prios):
+        assert pytest.approx(replay_buffer.priorities[i]) == prio + replay_buffer.eps
+
+
+def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
+    sampled = {
+        "samples": [
             Transition(
                 ob=f"{i} o",
                 prev_action=f"{i} p a",
@@ -527,38 +619,19 @@ def test_gata_double_dqn_sample(replay_buffer_gata_double_dqn):
                 ),
                 action_cands=[f"{i} a1", f"{i} a2"],
                 action_id=random.randint(0, 1),
-                cum_reward=random.random(),
-                step_reward=random.random(),
+                cum_reward=random.randint(0, 10),
+                step_reward=random.randint(0, 1),
                 next_ob=f"{i} next o",
                 next_action_cands=[f"{i} next a1", f"{i} next a2"],
+                done=False,
             )
             for i in range(10)
-        ]
-    )
-    for transition in replay_buffer_gata_double_dqn.sample():
-        assert transition in replay_buffer_gata_double_dqn.buffer
-
-
-def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
-    transitions = [
-        Transition(
-            ob=f"{i} o",
-            prev_action=f"{i} p a",
-            rnn_prev_hidden=torch.rand(
-                replay_buffer_gata_double_dqn.hparams.hidden_dim
-            ),
-            action_cands=[f"{i} a1", f"{i} a2"],
-            action_id=random.randint(0, 1),
-            cum_reward=random.randint(0, 10),
-            step_reward=random.randint(0, 1),
-            next_ob=f"{i} next o",
-            next_action_cands=[f"{i} next a1", f"{i} next a2"],
-            done=False,
-        )
-        for i in range(10)
-    ]
-    batch_size = len(transitions)
-    batch = replay_buffer_gata_double_dqn.prepare_batch(transitions)
+        ],
+        "indices": list(i for i in range(10)),
+        "weights": torch.rand(10).tolist(),
+    }
+    batch_size = len(sampled["samples"])
+    batch = replay_buffer_gata_double_dqn.prepare_batch(sampled)
     assert batch["obs_word_ids"].size() == (batch_size, 2)
     assert batch["obs_mask"].size() == (batch_size, 2)
     assert batch["prev_action_word_ids"].size() == (batch_size, 3)
@@ -568,13 +641,17 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
         replay_buffer_gata_double_dqn.hparams.hidden_dim,
     )
     assert batch["rnn_prev_hidden"].equal(
-        torch.stack([t.rnn_prev_hidden for t in transitions])
+        torch.stack([t.rnn_prev_hidden for t in sampled["samples"]])
     )
     assert batch["action_cand_word_ids"].size() == (batch_size, 2, 2)
     assert batch["action_cand_mask"].size() == (batch_size, 2, 2)
     assert batch["action_mask"].size() == (batch_size, 2)
-    assert batch["actions_idx"].equal(torch.tensor([t.action_id for t in transitions]))
-    assert batch["rewards"].equal(torch.tensor([t.step_reward for t in transitions]))
+    assert batch["actions_idx"].equal(
+        torch.tensor([t.action_id for t in sampled["samples"]])
+    )
+    assert batch["rewards"].equal(
+        torch.tensor([t.step_reward for t in sampled["samples"]])
+    )
     assert batch["curr_action_word_ids"].size() == (batch_size, 2)
     assert batch["curr_action_mask"].size() == (batch_size, 2)
     assert batch["next_obs_word_ids"].size() == (batch_size, 3)
@@ -582,6 +659,8 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
     assert batch["next_action_mask"].size() == (batch_size, 2)
+    assert batch["indices"] == sampled["indices"]
+    assert batch["weights"].equal(torch.tensor(sampled["weights"]))
 
 
 def test_gata_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
@@ -617,11 +696,11 @@ def test_gata_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
 
 
 def test_gata_double_dqn_populate_replay_buffer(replay_buffer_gata_double_dqn):
-    assert len(replay_buffer_gata_double_dqn.buffer) == 0
+    assert len(replay_buffer_gata_double_dqn.replay_buffer.buffer) == 0
     replay_buffer_gata_double_dqn.populate_replay_buffer()
-    assert len(replay_buffer_gata_double_dqn.buffer) > 0
+    assert len(replay_buffer_gata_double_dqn.replay_buffer.buffer) > 0
     # make sure everyhing is sequential
-    a, b = itertools.tee(replay_buffer_gata_double_dqn.buffer)
+    a, b = itertools.tee(replay_buffer_gata_double_dqn.replay_buffer.buffer)
     next(b, None)
     for prev_t, curr_t in zip(a, b):
         if prev_t.done:
@@ -691,11 +770,11 @@ def test_main(tmp_path):
                 "data.train_game_batch_size=3",
                 "data.train_max_episode_steps=5",
                 "data.train_sample_batch_size=4",
-                "data.replay_buffer_populate_episodes=3",
                 "data.eval_max_episode_steps=5",
                 "data.eval_game_batch_size=3",
                 "train.training_step_freq=4",
                 "train.target_net_update_frequency=3",
+                "train.replay_buffer_populate_episodes=3",
                 "pl_trainer.max_epochs=2",
                 f"+pl_trainer.default_root_dir={tmp_path}",
             ],
