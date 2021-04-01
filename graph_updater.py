@@ -185,18 +185,16 @@ class GraphUpdater(EncoderMixin, nn.Module):
         # (batch, prev_action_len, hidden_dim)
 
         # decode the previous graph
-        if rnn_prev_hidden is None:
-            prev_graph = torch.zeros(
-                batch_size,
-                self.num_relations,
-                self.num_nodes,
-                self.num_nodes,
-                device=obs_word_ids.device,
-            )
-            # (batch, num_relation, num_node, num_node)
-        else:
-            prev_graph = self.f_d(rnn_prev_hidden)
-            # (batch, num_relation, num_node, num_node)
+        # if rnn_prev_hidden is None, pass in zeros, which is what GRUCell does.
+        # Also this makes it easier to train the action selector as you can simply
+        # put zeros for rnn_prev_hidden for initial transitions, instead of having to
+        # worry about None.
+        prev_graph = self.f_d(
+            torch.zeros(batch_size, self.hidden_dim, device=obs_word_ids.device)
+            if rnn_prev_hidden is None
+            else rnn_prev_hidden
+        )
+        # (batch, num_relation, num_node, num_node)
 
         if self.pretraining:
             # encode text observations
