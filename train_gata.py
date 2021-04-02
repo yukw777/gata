@@ -22,6 +22,7 @@ from typing import (
     Callable,
     Iterable,
     Any,
+    Tuple,
 )
 from textworld import EnvInfos
 from torch.utils.data import IterableDataset, DataLoader, Dataset
@@ -92,11 +93,17 @@ class Transition:
     # cumulative reward after the action
     cum_reward: int = 0
     # step reward after the action
-    step_reward: int = 0
+    # this is a float b/c of multi-step learning (discounted rewards)
+    step_reward: float = 0
     # next observation
     next_ob: str = ""
     # next action candidates
     next_action_cands: List[str] = field(default_factory=list)
+    # RNN current hidden states, or the hidden states right before the next state
+    # this is primarily used for multi-step learning
+    rnn_curr_hidden: torch.Tensor = field(
+        default_factory=lambda: torch.empty(0), compare=False, hash=True
+    )
     # done
     done: bool = False
 
@@ -110,6 +117,7 @@ class Transition:
             and self.step_reward == other.step_reward
             and self.next_ob == other.next_ob
             and self.next_action_cands == other.next_action_cands
+            and self.rnn_curr_hidden.equal(other.rnn_curr_hidden)
             and self.done == other.done
         )
 
@@ -130,6 +138,7 @@ class TransitionCache:
         step_rewards: List[float],
         next_obs: List[str],
         batch_next_action_cands: List[List[str]],
+        rnn_curr_hiddens: torch.Tensor,
         dones: List[bool],
     ) -> None:
         for i, (
@@ -142,6 +151,7 @@ class TransitionCache:
             step_reward,
             next_ob,
             next_action_cands,
+            rnn_curr_hidden,
             done,
         ) in enumerate(
             zip(
@@ -154,6 +164,7 @@ class TransitionCache:
                 step_rewards,
                 next_obs,
                 batch_next_action_cands,
+                rnn_curr_hiddens,
                 dones,
             )
         ):
@@ -171,6 +182,7 @@ class TransitionCache:
                     step_reward=step_reward,
                     next_ob=next_ob,
                     next_action_cands=next_action_cands,
+                    rnn_curr_hidden=rnn_curr_hidden,
                     done=done,
                 )
             )
@@ -213,6 +225,8 @@ class ReplayBuffer:
         alpha: float,
         beta_from: float,
         beta_frames: int,
+        multi_step: int,
+        reward_discount: float,
     ):
         self.capacity = capacity
         self.reward_threshold = reward_threshold
@@ -222,6 +236,8 @@ class ReplayBuffer:
         self.beta_from = beta_from
         self.beta_frames = beta_frames
         self.beta = beta_from
+        self.multi_step = multi_step
+        self.reward_discount = reward_discount
 
         self.buffer: List[Transition] = []
         self.buffer_next_id = 0
@@ -257,7 +273,7 @@ class ReplayBuffer:
             self.buffer_next_id += 1
             self.buffer_next_id %= self.capacity
 
-    def sample(self) -> Dict[str, Any]:
+    def sample(self) -> Optional[Dict[str, Any]]:
         if len(self.buffer) == self.capacity:
             prios = self.priorities
         else:
@@ -269,10 +285,15 @@ class ReplayBuffer:
         probs /= probs.sum()
 
         # sample indices based on probs
-        indices = np.random.choice(
+        sampled_indices = np.random.choice(
             len(self.buffer), self.sample_batch_size, p=probs, replace=False
         )
-        samples = [self.buffer[i] for i in indices]
+        sampled_steps = np.random.randint(
+            1, self.multi_step + 1, size=len(sampled_indices)
+        )
+        samples, indices, steps = self.sample_multi_step(sampled_indices, sampled_steps)
+        if len(samples) == 0:
+            return None
 
         # weight of each sample to compensate for the bias added in
         # with prioritising samples
@@ -280,7 +301,48 @@ class ReplayBuffer:
         weights /= weights.max()
 
         # return the samples, the indices chosen and the weight of each sample
-        return {"samples": samples, "indices": indices, "weights": weights.tolist()}
+        return {
+            "samples": samples,
+            "steps": steps,
+            "indices": indices,
+            "weights": weights.tolist(),
+        }
+
+    def sample_multi_step(
+        self, sampled_indices: List[int], sampled_steps: List[int]
+    ) -> Tuple[List[Transition], List[int], List[int]]:
+        multi_step_samples: List[Transition] = []
+        indices: List[int] = []
+        steps: List[int] = []
+        for idx, step in zip(sampled_indices, sampled_steps):
+            # make sure the game is not done before "step" steps.
+            if any(self.buffer[i].done for i in range(idx, idx + step)):
+                continue
+            head_t = self.buffer[idx]
+            tail_t = self.buffer[idx + step]
+            step_reward = sum(
+                self.reward_discount ** i * self.buffer[idx + i].step_reward
+                for i in range(step + 1)
+            )
+            multi_step_samples.append(
+                Transition(
+                    ob=head_t.ob,
+                    prev_action=head_t.prev_action,
+                    rnn_prev_hidden=head_t.rnn_prev_hidden,
+                    action_cands=head_t.action_cands,
+                    action_id=head_t.action_id,
+                    cum_reward=tail_t.cum_reward,
+                    step_reward=step_reward,
+                    next_ob=tail_t.next_ob,
+                    next_action_cands=tail_t.next_action_cands,
+                    rnn_curr_hidden=tail_t.rnn_curr_hidden,
+                    done=tail_t.done,
+                )
+            )
+            indices.append(idx)
+            steps.append(step)
+
+        return multi_step_samples, indices, steps
 
     def update_priorities(
         self, batch_idx: List[int], batch_priorities: List[float]
@@ -322,6 +384,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         replay_buffer_alpha: float = 0.6,
         replay_buffer_beta_from: float = 0.4,
         replay_buffer_beta_frames: int = 100000,
+        replay_buffer_multi_step: int = 3,
         train_sample_batch_size: int = 64,
         learning_rate: float = 1e-3,
         target_net_update_frequency: int = 500,
@@ -363,6 +426,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "replay_buffer_alpha",
             "replay_buffer_beta_from",
             "replay_buffer_beta_frames",
+            "replay_buffer_multi_step",
             "train_sample_batch_size",
             "learning_rate",
             "target_net_update_frequency",
@@ -565,6 +629,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             replay_buffer_alpha,
             replay_buffer_beta_from,
             replay_buffer_beta_frames,
+            replay_buffer_multi_step,
+            reward_discount,
         )
 
         # bookkeeping
@@ -681,7 +747,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 batch["next_obs_mask"],
                 batch["curr_action_word_ids"],
                 batch["curr_action_mask"],
-                results["rnn_curr_hidden"],
+                batch["rnn_curr_hidden"],
                 batch["next_action_cand_word_ids"],
                 batch["next_action_cand_mask"],
                 batch["next_action_mask"],
@@ -705,14 +771,15 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 next_tgt_action_scores, batch["next_action_mask"], next_actions_idx
             )
 
-        target_q_values = (
-            batch["rewards"]
-            + next_q_values * self.hparams.reward_discount  # type: ignore
+        target_q_values = batch["rewards"] + next_q_values * (
+            self.hparams.reward_discount ** batch["steps"]  # type: ignore
         )
 
         # update priorities for the replay buffer
         abs_td_error = torch.abs(q_values - target_q_values)
-        self.replay_buffer.update_priorities(batch["indices"], abs_td_error.tolist())
+        self.replay_buffer.update_priorities(
+            batch["indices"].tolist(), abs_td_error.tolist()
+        )
 
         # calculate loss
         loss = torch.mean(
@@ -993,7 +1060,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 curr - prev for prev, curr in zip(prev_cum_rewards, cum_rewards)
             ]
 
-            # add the previous transition to the cache
+            # add the transition to the cache
+            rnn_curr_hidden = results["rnn_curr_hidden"]
             transition_cache.batch_add(
                 obs,
                 prev_actions,
@@ -1004,6 +1072,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                 step_rewards,
                 next_obs,
                 next_action_cands,
+                rnn_curr_hidden,
                 dones,
             )
 
@@ -1012,7 +1081,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             action_cands = next_action_cands
             prev_actions = actions
             prev_cum_rewards = cum_rewards
-            rnn_prev_hidden = results["rnn_curr_hidden"]
+            rnn_prev_hidden = rnn_curr_hidden
             episode_end_fn()
 
         # push transitions into the buffer
@@ -1026,7 +1095,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         ]
         self.game_steps = transition_cache.get_game_steps()
 
-    def prepare_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+    def prepare_batch(self, batch: Dict[str, Any]) -> Dict[str, torch.Tensor]:
         obs: List[str] = []
         prev_actions: List[str] = []
         rnn_prev_hiddens: List[torch.Tensor] = []
@@ -1036,6 +1105,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         rewards: List[float] = []
         next_obs: List[str] = []
         next_action_cands: List[List[str]] = []
+        rnn_curr_hiddens: List[torch.Tensor] = []
         for transition in batch["samples"]:
             obs.append(transition.ob)
             prev_actions.append(transition.prev_action)
@@ -1046,6 +1116,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             rewards.append(transition.step_reward)
             next_obs.append(transition.next_ob)
             next_action_cands.append(transition.next_action_cands)
+            rnn_curr_hiddens.append(transition.rnn_curr_hidden)
 
         # preprocess
         obs_word_ids, obs_mask = self.agent.preprocessor.preprocess(obs)
@@ -1085,8 +1156,10 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             "next_action_cand_word_ids": next_action_cand_word_ids,
             "next_action_cand_mask": next_action_cand_mask,
             "next_action_mask": next_action_mask,
+            "rnn_curr_hidden": torch.stack(rnn_curr_hiddens),
+            "steps": torch.tensor(batch["steps"]),
             "weights": torch.tensor(batch["weights"]),
-            "indices": batch["indices"],
+            "indices": torch.tensor(batch["indices"]),
         }
 
 

@@ -290,8 +290,12 @@ def test_gata_double_dqn_training_step(
                 "next_action_mask": torch.randint(
                     2, (batch_size, num_action_cands), dtype=torch.float
                 ),
+                "rnn_curr_hidden": torch.rand(
+                    batch_size, replay_buffer_gata_double_dqn.hparams.hidden_dim
+                ),
+                "steps": torch.randint(1, 4, (batch_size,)),
                 "weights": torch.rand(batch_size),
-                "indices": list(range(batch_size)),
+                "indices": torch.tensor(list(range(batch_size))),
             },
             0,
         ).ndimension()
@@ -331,6 +335,7 @@ def test_transition_cache_batch_add():
                 ]
                 for i in range(3)
             ],
+            "rnn_curr_hiddens": torch.rand(3, 12),
             "dones": dones,
         }
 
@@ -346,6 +351,7 @@ def test_transition_cache_batch_add():
         assert (
             transition.next_action_cands == batch["batch_next_action_cands"][batch_num]
         )
+        assert transition.rnn_curr_hidden.equal(batch["rnn_curr_hiddens"][batch_num])
         assert transition.done == batch["dones"][batch_num]
 
     # add a not done step
@@ -465,7 +471,7 @@ def replay_buffer_gata_double_dqn():
 
 @pytest.fixture
 def replay_buffer():
-    return ReplayBuffer(20, 0.1, 4, 1e-6, 0.6, 0.4, 100000)
+    return ReplayBuffer(20, 0.1, 4, 1e-6, 0.6, 0.4, 100000, 3, 0.9)
 
 
 @pytest.mark.parametrize(
@@ -540,6 +546,7 @@ def test_replay_buffer_sample(replay_buffer):
             step_reward=random.random(),
             next_ob=f"{i} next o",
             next_action_cands=[f"{i} next a1", f"{i} next a2"],
+            rnn_curr_hidden=torch.rand(16),
         )
         for i in range(10)
     ]
@@ -548,12 +555,118 @@ def test_replay_buffer_sample(replay_buffer):
     # mess with the priorities so that only the first four are drawn
     replay_buffer.priorities[:4] = 1.0
     sampled = replay_buffer.sample()
+    assert len(sampled["steps"]) == 4
+    for step in sampled["steps"]:
+        assert step in set(range(1, replay_buffer.multi_step + 1))
     assert set(sampled["indices"]) == set([0, 1, 2, 3])
     assert len(sampled["samples"]) == 4
     for i, sample in zip(sampled["indices"], sampled["samples"]):
-        assert sample == replay_buffer.buffer[i]
+        # cum_reward, step_reward, next_ob, next_action_cands
+        # rnn_curr_hidden, done
+        # are not the same b/c of multi-step learning
+        # skip them since they're tested separately anyway
+        expected = replay_buffer.buffer[i]
+        assert sample.ob == expected.ob
+        assert sample.prev_action == expected.prev_action
+        assert sample.rnn_prev_hidden.equal(expected.rnn_prev_hidden)
+        assert sample.action_cands == expected.action_cands
+        assert sample.action_id == expected.action_id
     # weights are all 1's b/c they all have the same values
     assert sampled["weights"] == [1.0] * 4
+
+
+def test_replay_buffer_sample_multi_step(replay_buffer):
+    replay_buffer.buffer = [
+        Transition(
+            ob=f"{i} o",
+            prev_action=f"{i} p a",
+            rnn_prev_hidden=torch.rand(16),
+            action_cands=[f"{i} a1", f"{i} a2"],
+            action_id=random.randint(0, 1),
+            cum_reward=random.random(),
+            step_reward=random.random(),
+            next_ob=f"{i} next o",
+            next_action_cands=[f"{i} next a1", f"{i} next a2"],
+            rnn_curr_hidden=torch.rand(16),
+            done=True if (i + 1) % 5 == 0 else False,
+        )
+        for i in range(10)
+    ]
+    replay_buffer.buffer_next_id += 10
+
+    # 0 steps
+    samples, indices, steps = replay_buffer.sample_multi_step([0, 1], [0, 0])
+    assert steps == [0, 0]
+    assert indices == [0, 1]
+    assert samples == replay_buffer.buffer[:2]
+
+    # 1 step
+    samples, indices, steps = replay_buffer.sample_multi_step([0], [1])
+    assert steps == [1]
+    assert indices == [0]
+    assert len(samples) == 1
+    sample = samples[0]
+    head = replay_buffer.buffer[0]
+    tail = replay_buffer.buffer[1]
+    assert sample.ob == head.ob
+    assert sample.prev_action == head.prev_action
+    assert sample.action_cands == head.action_cands
+    assert sample.action_id == head.action_id
+    assert sample.cum_reward == tail.cum_reward
+    assert (
+        sample.step_reward
+        == head.step_reward + tail.step_reward * replay_buffer.reward_discount
+    )
+    assert sample.next_ob == tail.next_ob
+    assert sample.next_action_cands == tail.next_action_cands
+    assert sample.rnn_curr_hidden.equal(tail.rnn_curr_hidden)
+    assert sample.done is False
+
+    # 2 step and tail is done
+    samples, indices, steps = replay_buffer.sample_multi_step([2], [2])
+    assert steps == [2]
+    assert indices == [2]
+    assert len(samples) == 1
+    sample = samples[0]
+    head = replay_buffer.buffer[2]
+    tail = replay_buffer.buffer[4]
+    assert sample.ob == head.ob
+    assert sample.prev_action == head.prev_action
+    assert sample.action_cands == head.action_cands
+    assert sample.action_id == head.action_id
+    assert sample.cum_reward == tail.cum_reward
+    assert sample.step_reward == head.step_reward + replay_buffer.buffer[
+        3
+    ].step_reward * replay_buffer.reward_discount + tail.step_reward * (
+        replay_buffer.reward_discount ** 2
+    )
+    assert sample.next_ob == tail.next_ob
+    assert sample.next_action_cands == tail.next_action_cands
+    assert sample.rnn_curr_hidden.equal(tail.rnn_curr_hidden)
+    assert sample.done is True
+
+    # 2 samples with 2 step. one of them goes over
+    samples, indices, steps = replay_buffer.sample_multi_step([2, 3], [2, 2])
+    assert steps == [2]
+    assert indices == [2]
+    assert len(samples) == 1
+    sample = samples[0]
+    head = replay_buffer.buffer[2]
+    tail = replay_buffer.buffer[4]
+    assert sample.ob == head.ob
+    assert sample.prev_action == head.prev_action
+    assert sample.action_cands == head.action_cands
+    assert sample.action_id == head.action_id
+    assert sample.cum_reward == tail.cum_reward
+    assert sample.step_reward == head.step_reward + replay_buffer.buffer[
+        3
+    ].step_reward * replay_buffer.reward_discount + tail.step_reward * (
+        replay_buffer.reward_discount ** 2
+    )
+    assert sample.next_ob == tail.next_ob
+    assert sample.next_action_cands == tail.next_action_cands
+    assert sample.rnn_curr_hidden.equal(tail.rnn_curr_hidden)
+    assert sample.done is True
 
 
 @pytest.mark.parametrize(
@@ -623,10 +736,14 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
                 step_reward=random.randint(0, 1),
                 next_ob=f"{i} next o",
                 next_action_cands=[f"{i} next a1", f"{i} next a2"],
+                rnn_curr_hidden=torch.rand(
+                    replay_buffer_gata_double_dqn.hparams.hidden_dim
+                ),
                 done=False,
             )
             for i in range(10)
         ],
+        "steps": torch.randint(1, 4, (10,)).tolist(),
         "indices": list(i for i in range(10)),
         "weights": torch.rand(10).tolist(),
     }
@@ -659,13 +776,25 @@ def test_gata_double_dqn_prepare_batch(replay_buffer_gata_double_dqn):
     assert batch["next_action_cand_word_ids"].size() == (batch_size, 2, 3)
     assert batch["next_action_cand_mask"].size() == (batch_size, 2, 3)
     assert batch["next_action_mask"].size() == (batch_size, 2)
-    assert batch["indices"] == sampled["indices"]
+    assert batch["rnn_curr_hidden"].size() == (
+        batch_size,
+        replay_buffer_gata_double_dqn.hparams.hidden_dim,
+    )
+    assert batch["rnn_curr_hidden"].equal(
+        torch.stack([t.rnn_curr_hidden for t in sampled["samples"]])
+    )
+    assert batch["steps"].equal(torch.tensor(sampled["steps"]))
+    assert batch["indices"].equal(torch.tensor(sampled["indices"]))
     assert batch["weights"].equal(torch.tensor(sampled["weights"]))
 
 
 def test_gata_double_dqn_train_dataloader(replay_buffer_gata_double_dqn):
-    batch_size = replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
     for batch in replay_buffer_gata_double_dqn.train_dataloader():
+        # sampled batch size could be less than train_sample_batch_size
+        batch_size = batch["obs_word_ids"].size(0)
+        assert (
+            batch_size <= replay_buffer_gata_double_dqn.hparams.train_sample_batch_size
+        )
         assert batch["obs_word_ids"].size(0) == batch_size
         assert batch["obs_mask"].size() == batch["obs_word_ids"].size()
         assert batch["prev_action_word_ids"].size(0) == batch_size
