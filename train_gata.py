@@ -987,7 +987,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         def episode_end() -> None:
             self.total_episode_steps += 1
 
-        yield from self.play_episodes(sample, act_epsilon_greedy, episode_end)
+        # As the agent gets better, it'll take fewer steps, and eventually
+        # it may not even take "training_step_freq" steps per batch of episodes,
+        # which means there is no batch for that epoch. PL doesn't like that
+        # (https://github.com/PyTorchLightning/pytorch-lightning/issues/6810)
+        # so keep playing episods until we get at least one batch.
+        sampled = False
+        while not sampled:
+            for batch in self.play_episodes(sample, act_epsilon_greedy, episode_end):
+                sampled = True
+                yield batch
 
         # set up for the next batch of episodes
         if (

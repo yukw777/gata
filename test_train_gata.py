@@ -890,6 +890,22 @@ def test_rl_early_stopping(replay_buffer_gata_double_dqn):
             assert es.stopped_epoch == 0
 
 
+def test_gata_double_dqn_gen_tain_batch(replay_buffer_gata_double_dqn):
+    # make sure gen_train_batch() produces at least one batch
+    def mock_play_episodes(sample, action_select_fn, episode_end_fn):
+        if mock_play_episodes.counter == 0:
+            mock_play_episodes.counter += 1
+            return
+        yield "batch"
+
+    mock_play_episodes.counter = 0
+
+    replay_buffer_gata_double_dqn.play_episodes = mock_play_episodes
+
+    # no exception should be raised
+    next(replay_buffer_gata_double_dqn.gen_train_batch())
+
+
 def test_main(tmp_path):
     with initialize(config_path="train_gata_conf"):
         cfg = compose(
