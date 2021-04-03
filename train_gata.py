@@ -59,17 +59,20 @@ def request_infos_for_eval() -> EnvInfos:
     return request_infos
 
 
-def get_game_dir(
+def get_game_dirs(
     base_dir_path: str,
     dataset: str,
-    difficulty_level: int,
+    difficulty_levels: List[int],
     training_size: Optional[int] = None,
-) -> str:
-    return os.path.join(
-        base_dir_path,
-        dataset + ("" if training_size is None else f"_{training_size}"),
-        f"difficulty_level_{difficulty_level}",
-    )
+) -> List[str]:
+    return [
+        os.path.join(
+            base_dir_path,
+            dataset + ("" if training_size is None else f"_{training_size}"),
+            f"difficulty_level_{difficulty_level}",
+        )
+        for difficulty_level in difficulty_levels
+    ]
 
 
 @dataclass
@@ -369,6 +372,8 @@ class RLEvalDataset(Dataset):
 
 
 class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
+    DIFFICULTY_LEVEL_MAP = {1: [3], 2: [7], 3: [5], 4: [9], 5: [3, 7, 5, 9]}
+
     def __init__(
         self,
         base_data_dir: Optional[str] = None,
@@ -452,16 +457,17 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
         # load the test rl data
         self.train_env = load_textworld_games(
-            to_absolute_path(
-                get_game_dir(
+            [
+                to_absolute_path(game_dir)
+                for game_dir in get_game_dirs(
                     base_data_dir,
                     "train",
-                    difficulty_level,
+                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
                     training_size=train_data_size,
                 )
-            )
+            ]
             if base_data_dir is not None
-            else "test-data/rl_games",
+            else ["test-data/rl_games"],
             "train",
             request_infos_for_train(),
             train_max_episode_steps,
@@ -469,9 +475,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
         # load the val rl data
         self.val_env = load_textworld_games(
-            to_absolute_path(get_game_dir(base_data_dir, "valid", difficulty_level))
+            [
+                to_absolute_path(game_dir)
+                for game_dir in get_game_dirs(
+                    base_data_dir,
+                    "valid",
+                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
+                )
+            ]
             if base_data_dir is not None
-            else "test-data/rl_games",
+            else ["test-data/rl_games"],
             "val",
             request_infos_for_eval(),
             eval_max_episode_steps,
@@ -479,9 +492,16 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
         # load the test rl data
         self.test_env = load_textworld_games(
-            to_absolute_path(get_game_dir(base_data_dir, "test", difficulty_level))
+            [
+                to_absolute_path(game_dir)
+                for game_dir in get_game_dirs(
+                    base_data_dir,
+                    "test",
+                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
+                )
+            ]
             if base_data_dir is not None
-            else "test-data/rl_games",
+            else ["test-data/rl_games"],
             "test",
             request_infos_for_eval(),
             eval_max_episode_steps,

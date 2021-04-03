@@ -10,7 +10,7 @@ from pytorch_lightning import Trainer
 from train_gata import (
     request_infos_for_train,
     request_infos_for_eval,
-    get_game_dir,
+    get_game_dirs,
     GATADoubleDQN,
     TransitionCache,
     Transition,
@@ -44,22 +44,46 @@ def test_request_infos_for_eval():
 
 
 @pytest.mark.parametrize(
-    "base_dir_path,dataset,difficulty_level,training_size,expected_game_dir",
+    "base_dir_path,dataset,difficulty_levels,training_size,expected_game_dirs",
     [
-        ("base_dir", "train", 1, 1, "base_dir/train_1/difficulty_level_1"),
-        ("base_dir", "train", 2, 10, "base_dir/train_10/difficulty_level_2"),
-        ("base_dir", "valid", 10, None, "base_dir/valid/difficulty_level_10"),
-        ("base_dir", "test", 20, None, "base_dir/test/difficulty_level_20"),
+        ("base_dir", "train", [1], 1, ["base_dir/train_1/difficulty_level_1"]),
+        ("base_dir", "train", [2], 10, ["base_dir/train_10/difficulty_level_2"]),
+        ("base_dir", "valid", [3], None, ["base_dir/valid/difficulty_level_3"]),
+        ("base_dir", "test", [4], None, ["base_dir/test/difficulty_level_4"]),
+        (
+            "base_dir",
+            "train",
+            [1, 2],
+            1,
+            [
+                "base_dir/train_1/difficulty_level_1",
+                "base_dir/train_1/difficulty_level_2",
+            ],
+        ),
+        (
+            "base_dir",
+            "valid",
+            [3, 4],
+            None,
+            ["base_dir/valid/difficulty_level_3", "base_dir/valid/difficulty_level_4"],
+        ),
+        (
+            "base_dir",
+            "test",
+            [4, 5],
+            None,
+            ["base_dir/test/difficulty_level_4", "base_dir/test/difficulty_level_5"],
+        ),
     ],
 )
-def test_get_game_dir(
-    base_dir_path, dataset, difficulty_level, training_size, expected_game_dir
+def test_get_game_dirs(
+    base_dir_path, dataset, difficulty_levels, training_size, expected_game_dirs
 ):
     assert (
-        get_game_dir(
-            base_dir_path, dataset, difficulty_level, training_size=training_size
+        get_game_dirs(
+            base_dir_path, dataset, difficulty_levels, training_size=training_size
         )
-        == expected_game_dir
+        == expected_game_dirs
     )
 
 
@@ -927,11 +951,13 @@ def test_main(tmp_path):
         main(cfg)
 
 
-def test_main_test_only(tmp_path):
+@pytest.mark.parametrize("difficulty_level", [1, 5])
+def test_main_test_only(tmp_path, difficulty_level):
     with initialize(config_path="train_gata_conf"):
         cfg = compose(
             config_name="config",
             overrides=[
+                f"data.difficulty_level={difficulty_level}",
                 "data.eval_max_episode_steps=5",
                 "data.eval_game_batch_size=3",
                 "eval.test_only=true",

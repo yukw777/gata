@@ -141,13 +141,13 @@ def test_load_textworld_games():
     name = "test"
 
     env = load_textworld_games(
-        "test-data/rl_games",
+        ["test-data/rl_games"] * 2,
         name,
         request_infos,
         max_episode_steps,
         batch_size,
     )
-    assert len(env.gamefiles) == 2
+    assert len(env.gamefiles) == 4
     assert env.request_infos == request_infos
     assert env.batch_size == batch_size
     # for some reason env.spec.max_episode_steps is None
