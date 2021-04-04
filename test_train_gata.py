@@ -978,6 +978,7 @@ def test_main(tmp_path):
         cfg = compose(
             config_name="config",
             overrides=[
+                "data.base_data_dir=null",
                 "data.train_data_size=1",
                 "data.train_game_batch_size=3",
                 "data.train_max_episode_steps=5",
@@ -1000,7 +1001,7 @@ def test_main_test_only(tmp_path, difficulty_level):
         cfg = compose(
             config_name="config",
             overrides=[
-                f"data.difficulty_level={difficulty_level}",
+                "data.base_data_dir=null",
                 "eval.test_only=true",
                 "eval.checkpoint_path=test-data/test-gata.ckpt",
                 f"+pl_trainer.default_root_dir={tmp_path}",
