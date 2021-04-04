@@ -479,31 +479,28 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
 
         # load the test rl data
         if base_data_dir is None:
-            train_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
-            val_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
-            test_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
+            abs_base_data_dir = to_absolute_path("test-data/rl_games")
+            train_game_files = glob.glob(os.path.join(abs_base_data_dir, "*.z8"))
+            val_game_files = glob.glob(os.path.join(abs_base_data_dir, "*.z8"))
+            test_game_files = glob.glob(os.path.join(abs_base_data_dir, "*.z8"))
         else:
+            abs_base_data_dir = to_absolute_path(base_data_dir)
             train_game_files = get_game_files(
-                base_data_dir,
+                abs_base_data_dir,
                 "train",
                 self.DIFFICULTY_LEVEL_MAP[difficulty_level],
                 training_size=train_data_size,
             )
             val_game_files = get_game_files(
-                base_data_dir,
+                abs_base_data_dir,
                 "valid",
                 self.DIFFICULTY_LEVEL_MAP[difficulty_level],
             )
             test_game_files = get_game_files(
-                base_data_dir,
+                abs_base_data_dir,
                 "test",
                 self.DIFFICULTY_LEVEL_MAP[difficulty_level],
             )
-
-        # change them to absolute paths for hydra
-        train_game_files = [to_absolute_path(path) for path in train_game_files]
-        val_game_files = [to_absolute_path(path) for path in val_game_files]
-        test_game_files = [to_absolute_path(path) for path in test_game_files]
 
         self.train_env = load_textworld_games(
             train_game_files,
