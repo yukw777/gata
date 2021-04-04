@@ -5,7 +5,6 @@ import random
 import itertools
 
 from hydra.experimental import initialize, compose
-from pytorch_lightning import Trainer
 
 from train_gata import (
     request_infos_for_train,
@@ -14,7 +13,6 @@ from train_gata import (
     GATADoubleDQN,
     TransitionCache,
     Transition,
-    RLEarlyStopping,
     ReplayBuffer,
     main,
 )
@@ -881,39 +879,6 @@ def test_gata_double_dqn_populate_replay_buffer(replay_buffer_gata_double_dqn):
         assert curr_t.cum_reward == prev_t.cum_reward + curr_t.step_reward
 
 
-def test_rl_early_stopping(replay_buffer_gata_double_dqn):
-    trainer = Trainer()
-    es = RLEarlyStopping("val_monitor", "train_monitor", 0.95, patience=3)
-
-    # if val score and train score are all below the threshold 0.95, don't stop
-    trainer.callback_metrics = {"val_monitor": 0.1, "train_monitor": 0.1}
-    es._run_early_stopping_check(trainer, replay_buffer_gata_double_dqn)
-    assert not trainer.should_stop
-
-    # if val score is 1.0 and train score is above the threshold, stop
-    trainer.callback_metrics = {"val_monitor": 1.0, "train_monitor": 0.95}
-    trainer.current_epoch = 1
-    es._run_early_stopping_check(trainer, replay_buffer_gata_double_dqn)
-    assert trainer.should_stop
-    assert es.stopped_epoch == 1
-
-    # if train score is above the threshold for `patience` times,
-    # but val score is not 1.0, stop
-    trainer.should_stop = False
-    es.wait_count = 0
-    es.stopped_epoch = 0
-    for i in range(3):
-        trainer.current_epoch = i
-        trainer.callback_metrics = {"val_monitor": 0.9, "train_monitor": 0.95}
-        es._run_early_stopping_check(trainer, replay_buffer_gata_double_dqn)
-        if i == 2:
-            assert trainer.should_stop
-            assert es.stopped_epoch == 2
-        else:
-            assert not trainer.should_stop
-            assert es.stopped_epoch == 0
-
-
 def test_gata_double_dqn_gen_tain_batch(replay_buffer_gata_double_dqn):
     # make sure gen_train_batch() produces at least one batch
     def mock_play_episodes(sample, action_select_fn, episode_end_fn):
@@ -958,8 +923,6 @@ def test_main_test_only(tmp_path, difficulty_level):
             config_name="config",
             overrides=[
                 f"data.difficulty_level={difficulty_level}",
-                "data.eval_max_episode_steps=5",
-                "data.eval_game_batch_size=3",
                 "eval.test_only=true",
                 "eval.checkpoint_path=test-data/test-gata.ckpt",
                 f"+pl_trainer.default_root_dir={tmp_path}",

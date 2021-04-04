@@ -1,16 +1,12 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
 import gym
 import textworld.gym
 import os
 import glob
-import wandb
 
-from pytorch_lightning.callbacks import Callback
-from pytorch_lightning.loggers import WandbLogger
-from typing import Optional, List, Sequence, Iterator, TypeVar, Dict, Any
+from typing import Optional, List, Sequence, Iterator, TypeVar
 from collections import Counter
 from textworld import EnvInfos
 
@@ -146,15 +142,3 @@ def load_textworld_games(
         asynchronous=False,
     )
     return gym.make(env_id)
-
-
-class WandbSaveCallback(Callback):
-    def on_save_checkpoint(
-        self,
-        trainer: pl.Trainer,
-        pl_module: pl.LightningModule,
-        checkpoint: Dict[str, Any],
-    ) -> dict:
-        if isinstance(trainer.logger, WandbLogger):
-            wandb.save(f"gata/{trainer.logger.version}/checkpoints/*.ckpt")
-        return {}

@@ -54,6 +54,9 @@ pl_trainer:
 eval:
   test_only: false
   checkpoint_path: null
+  word_vocab_path: vocabs/word_vocab.txt
+  node_vocab_path: vocabs/node_vocab.txt
+  relation_vocab_path: vocabs/relation_vocab.txt
 
 defaults:
   - logger: null

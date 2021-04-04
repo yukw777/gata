@@ -19,13 +19,13 @@ from utils import (
     generate_square_subsequent_mask,
     calculate_seq_f1,
     batchify,
-    WandbSaveCallback,
 )
 from preprocessor import BOS, EOS
 from graph_updater import GraphUpdater
 from layers import PositionalEncoderTensor2Tensor, WordNodeRelInitMixin
 from optimizers import RAdam
 from graph_updater_data import GraphUpdaterObsGenDataModule
+from callbacks import WandbSaveCallback
 
 
 class TextDecoderBlock(nn.Module):
