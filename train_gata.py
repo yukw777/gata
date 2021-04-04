@@ -341,12 +341,17 @@ class ReplayBuffer:
         steps: List[int] = []
         for idx, step in zip(sampled_indices, sampled_steps):
             # make sure the game is not done before "step" steps.
-            if any(self.buffer[i].done for i in range(idx, idx + step)):
+            # we loop around since the buffer is circular
+            if any(
+                self.buffer[i % len(self.buffer)].done for i in range(idx, idx + step)
+            ):
                 continue
             head_t = self.buffer[idx]
-            tail_t = self.buffer[idx + step]
+            # loop around since it might be in the front
+            tail_t = self.buffer[(idx + step) % len(self.buffer)]
             step_reward = sum(
-                self.reward_discount ** i * self.buffer[idx + i].step_reward
+                self.reward_discount ** i
+                * self.buffer[(idx + i) % len(self.buffer)].step_reward
                 for i in range(step + 1)
             )
             multi_step_samples.append(

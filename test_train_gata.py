@@ -768,6 +768,14 @@ def test_replay_buffer_sample_multi_step(replay_buffer):
     assert sample.rnn_curr_hidden.equal(tail.rnn_curr_hidden)
     assert sample.done is True
 
+    # 1 sampled near the end of the buffer with 2 step.
+    # make sure we loop around without error
+    # since it's done at index 9, no sample is produced.
+    samples, indices, steps = replay_buffer.sample_multi_step([8], [2])
+    assert steps == []
+    assert indices == []
+    assert len(samples) == 0
+
 
 @pytest.mark.parametrize(
     "beta_from,beta_frames",
