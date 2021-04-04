@@ -124,15 +124,12 @@ def increasing_mask(
 
 
 def load_textworld_games(
-    game_dirs: List[str],
+    game_files: List[str],
     name: str,
     request_infos: EnvInfos,
     max_episode_steps: int,
     batch_size: int,
 ) -> gym.Env:
-    game_files: List[str] = []
-    for game_dir in game_dirs:
-        game_files.extend(glob.glob(os.path.join(game_dir, "*.z8")))
     env_id = textworld.gym.register_games(
         game_files,
         request_infos=request_infos,

@@ -6,6 +6,8 @@ import numpy as np
 import hydra
 import itertools
 import gym
+import random
+import glob
 
 from urllib.parse import urlparse
 from omegaconf import DictConfig, OmegaConf
@@ -63,13 +65,14 @@ def request_infos_for_eval() -> EnvInfos:
     return request_infos
 
 
-def get_game_dirs(
+def get_game_files(
     base_dir_path: str,
     dataset: str,
     difficulty_levels: List[int],
     training_size: Optional[int] = None,
 ) -> List[str]:
-    return [
+    # construct the game directories
+    game_dirs = [
         os.path.join(
             base_dir_path,
             dataset + ("" if training_size is None else f"_{training_size}"),
@@ -77,6 +80,21 @@ def get_game_dirs(
         )
         for difficulty_level in difficulty_levels
     ]
+    game_files: List[str] = []
+    if training_size is not None:
+        # for training games, sample equally among difficulty levels
+        num_game_files_per_level = training_size // len(difficulty_levels)
+        for game_dir in game_dirs:
+            game_files.extend(
+                random.sample(
+                    glob.glob(os.path.join(game_dir, "*.z8")), num_game_files_per_level
+                )
+            )
+    else:
+        # for val and test games, collect all
+        for game_dir in game_dirs:
+            game_files.extend(glob.glob(os.path.join(game_dir, "*.z8")))
+    return game_files
 
 
 @dataclass
@@ -460,18 +478,35 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
 
         # load the test rl data
+        if base_data_dir is None:
+            train_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
+            val_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
+            test_game_files = glob.glob(os.path.join("test-data/rl_games", "*.z8"))
+        else:
+            train_game_files = get_game_files(
+                base_data_dir,
+                "train",
+                self.DIFFICULTY_LEVEL_MAP[difficulty_level],
+                training_size=train_data_size,
+            )
+            val_game_files = get_game_files(
+                base_data_dir,
+                "valid",
+                self.DIFFICULTY_LEVEL_MAP[difficulty_level],
+            )
+            test_game_files = get_game_files(
+                base_data_dir,
+                "test",
+                self.DIFFICULTY_LEVEL_MAP[difficulty_level],
+            )
+
+        # change them to absolute paths for hydra
+        train_game_files = [to_absolute_path(path) for path in train_game_files]
+        val_game_files = [to_absolute_path(path) for path in val_game_files]
+        test_game_files = [to_absolute_path(path) for path in test_game_files]
+
         self.train_env = load_textworld_games(
-            [
-                to_absolute_path(game_dir)
-                for game_dir in get_game_dirs(
-                    base_data_dir,
-                    "train",
-                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
-                    training_size=train_data_size,
-                )
-            ]
-            if base_data_dir is not None
-            else ["test-data/rl_games"],
+            train_game_files,
             "train",
             request_infos_for_train(),
             train_max_episode_steps,
@@ -479,16 +514,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
         # load the val rl data
         self.val_env = load_textworld_games(
-            [
-                to_absolute_path(game_dir)
-                for game_dir in get_game_dirs(
-                    base_data_dir,
-                    "valid",
-                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
-                )
-            ]
-            if base_data_dir is not None
-            else ["test-data/rl_games"],
+            val_game_files,
             "val",
             request_infos_for_eval(),
             eval_max_episode_steps,
@@ -496,16 +522,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         )
         # load the test rl data
         self.test_env = load_textworld_games(
-            [
-                to_absolute_path(game_dir)
-                for game_dir in get_game_dirs(
-                    base_data_dir,
-                    "test",
-                    self.DIFFICULTY_LEVEL_MAP[difficulty_level],
-                )
-            ]
-            if base_data_dir is not None
-            else ["test-data/rl_games"],
+            test_game_files,
             "test",
             request_infos_for_eval(),
             eval_max_episode_steps,

@@ -140,8 +140,14 @@ def test_load_textworld_games():
     batch_size = 5
     name = "test"
 
+    base_dir = "test-data/rl_games/"
     env = load_textworld_games(
-        ["test-data/rl_games"] * 2,
+        [
+            f"{base_dir}tw-cooking-recipe1+take1+cook+open-BNVaijeLTn3jcvneFBY2.z8",
+            f"{base_dir}tw-cooking-recipe1+take1+open-BNVaijeLTn3jcvneFBY2.z8",
+            f"{base_dir}tw-cooking-recipe1+take1+cook+open-BNVaijeLTn3jcvneFBY2.z8",
+            f"{base_dir}tw-cooking-recipe1+take1+open-BNVaijeLTn3jcvneFBY2.z8",
+        ],
         name,
         request_infos,
         max_episode_steps,

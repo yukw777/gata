@@ -9,7 +9,7 @@ from hydra.experimental import initialize, compose
 from train_gata import (
     request_infos_for_train,
     request_infos_for_eval,
-    get_game_dirs,
+    get_game_files,
     GATADoubleDQN,
     TransitionCache,
     Transition,
@@ -42,46 +42,124 @@ def test_request_infos_for_eval():
 
 
 @pytest.mark.parametrize(
-    "base_dir_path,dataset,difficulty_levels,training_size,expected_game_dirs",
+    "dataset,difficulty_levels,training_size,expected_game_files",
     [
-        ("base_dir", "train", [1], 1, ["base_dir/train_1/difficulty_level_1"]),
-        ("base_dir", "train", [2], 10, ["base_dir/train_10/difficulty_level_2"]),
-        ("base_dir", "valid", [3], None, ["base_dir/valid/difficulty_level_3"]),
-        ("base_dir", "test", [4], None, ["base_dir/test/difficulty_level_4"]),
         (
-            "base_dir",
             "train",
-            [1, 2],
+            [1],
             1,
             [
-                "base_dir/train_1/difficulty_level_1",
-                "base_dir/train_1/difficulty_level_2",
+                "test-data/rl_games/train_1/difficulty_level_1/train_1-level-1.z8",
             ],
         ),
         (
-            "base_dir",
-            "valid",
-            [3, 4],
-            None,
-            ["base_dir/valid/difficulty_level_3", "base_dir/valid/difficulty_level_4"],
+            "train",
+            [2],
+            1,
+            [
+                "test-data/rl_games/train_1/difficulty_level_2/train_1-level-2.z8",
+            ],
         ),
         (
-            "base_dir",
-            "test",
-            [4, 5],
+            "train",
+            [1],
+            2,
+            [
+                "test-data/rl_games/train_2/difficulty_level_1/train_2-level-1-1.z8",
+                "test-data/rl_games/train_2/difficulty_level_1/train_2-level-1-2.z8",
+            ],
+        ),
+        (
+            "train",
+            [2],
+            2,
+            [
+                "test-data/rl_games/train_2/difficulty_level_2/train_2-level-2-1.z8",
+                "test-data/rl_games/train_2/difficulty_level_2/train_2-level-2-2.z8",
+            ],
+        ),
+        (
+            "valid",
+            [1],
             None,
-            ["base_dir/test/difficulty_level_4", "base_dir/test/difficulty_level_5"],
+            [
+                "test-data/rl_games/valid/difficulty_level_1/valid-level-1-1.z8",
+                "test-data/rl_games/valid/difficulty_level_1/valid-level-1-2.z8",
+            ],
+        ),
+        (
+            "valid",
+            [2],
+            None,
+            [
+                "test-data/rl_games/valid/difficulty_level_2/valid-level-2-1.z8",
+                "test-data/rl_games/valid/difficulty_level_2/valid-level-2-2.z8",
+            ],
+        ),
+        (
+            "test",
+            [1],
+            None,
+            [
+                "test-data/rl_games/test/difficulty_level_1/test-level-1-1.z8",
+                "test-data/rl_games/test/difficulty_level_1/test-level-1-2.z8",
+            ],
+        ),
+        (
+            "test",
+            [2],
+            None,
+            [
+                "test-data/rl_games/test/difficulty_level_2/test-level-2-1.z8",
+                "test-data/rl_games/test/difficulty_level_2/test-level-2-2.z8",
+            ],
+        ),
+        (
+            "train",
+            [1, 2],
+            2,
+            # static since we set the seed
+            [
+                "test-data/rl_games/train_2/difficulty_level_1/train_2-level-1-1.z8",
+                "test-data/rl_games/train_2/difficulty_level_2/train_2-level-2-2.z8",
+            ],
+        ),
+        (
+            "valid",
+            [1, 2],
+            None,
+            [
+                "test-data/rl_games/valid/difficulty_level_1/valid-level-1-1.z8",
+                "test-data/rl_games/valid/difficulty_level_1/valid-level-1-2.z8",
+                "test-data/rl_games/valid/difficulty_level_2/valid-level-2-1.z8",
+                "test-data/rl_games/valid/difficulty_level_2/valid-level-2-2.z8",
+            ],
+        ),
+        (
+            "test",
+            [1, 2],
+            None,
+            [
+                "test-data/rl_games/test/difficulty_level_1/test-level-1-1.z8",
+                "test-data/rl_games/test/difficulty_level_1/test-level-1-2.z8",
+                "test-data/rl_games/test/difficulty_level_2/test-level-2-1.z8",
+                "test-data/rl_games/test/difficulty_level_2/test-level-2-2.z8",
+            ],
         ),
     ],
 )
-def test_get_game_dirs(
-    base_dir_path, dataset, difficulty_levels, training_size, expected_game_dirs
-):
+def test_get_game_dirs(dataset, difficulty_levels, training_size, expected_game_files):
+    random.seed(42)
     assert (
-        get_game_dirs(
-            base_dir_path, dataset, difficulty_levels, training_size=training_size
+        set(
+            get_game_files(
+                "test-data/rl_games",
+                dataset,
+                difficulty_levels,
+                training_size=training_size,
+            )
         )
-        == expected_game_dirs
+        == set(expected_game_files)
     )
 
 
