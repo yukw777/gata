@@ -81,8 +81,9 @@ def get_game_files(
         for difficulty_level in difficulty_levels
     ]
     game_files: List[str] = []
-    if training_size is not None:
-        # for training games, sample equally among difficulty levels
+    if training_size is not None and len(difficulty_levels) > 1:
+        # for training games, if there are multiple difficulty levels
+        # sample equally among difficulty levels
         num_game_files_per_level = training_size // len(difficulty_levels)
         for game_dir in game_dirs:
             game_files.extend(
@@ -91,7 +92,7 @@ def get_game_files(
                 )
             )
     else:
-        # for val and test games, collect all
+        # for training games with one level, val and test games, collect all
         for game_dir in game_dirs:
             game_files.extend(glob.glob(os.path.join(game_dir, "*.z8")))
     return game_files
