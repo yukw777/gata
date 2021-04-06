@@ -50,18 +50,6 @@ class EqualModelCheckpoint(ModelCheckpoint):
         return should_update_best_and_save  # type: ignore
 
 
-class EqualNonZeroModelCheckpoint(EqualModelCheckpoint):
-    def check_monitor_top_k(
-        self, trainer, current: Optional[torch.Tensor] = None
-    ) -> bool:
-        """
-        If current is 0, don't save
-        """
-        if current is not None and current == 0:
-            return False
-        return super().check_monitor_top_k(trainer, current=current)
-
-
 class RLEarlyStopping(Callback):
     def __init__(
         self,

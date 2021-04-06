@@ -34,12 +34,7 @@ from graph_updater import GraphUpdater
 from agent import EpsilonGreedyAgent
 from optimizers import RAdam
 from train_graph_updater import GraphUpdaterObsGen
-from callbacks import (
-    EqualModelCheckpoint,
-    EqualNonZeroModelCheckpoint,
-    RLEarlyStopping,
-    WandbSaveCallback,
-)
+from callbacks import EqualModelCheckpoint, RLEarlyStopping, WandbSaveCallback
 
 
 def request_infos_for_train() -> EnvInfos:
@@ -913,37 +908,22 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         self.eval_epoch_end(outputs, "val")
 
     def on_validation_end(self) -> None:
-        train_model_ckpt, val_model_ckpt = list(
-            filter(
-                lambda c: isinstance(c, EqualModelCheckpoint), self.trainer.callbacks
-            )
-        )
-        if val_model_ckpt.best_model_score is not None:
-            # val_avg_game_normalized_rewards > 0 since something has been saved.
-            val_current_score = self.trainer.logger_connector.callback_metrics[
-                "val_avg_game_normalized_rewards"
-            ]
-            if val_current_score < val_model_ckpt.best_model_score:
-                self.ckpt_patience_count += 1
-            else:
-                self.ckpt_patience_count = 0
-        elif train_model_ckpt.best_model_score is not None:
-            train_current_score = self.trainer.logger_connector.callback_metrics[
-                "train_avg_game_normalized_rewards"
-            ]
-            if train_current_score < train_model_ckpt.best_model_score:
-                self.ckpt_patience_count += 1
-            else:
-                self.ckpt_patience_count = 0
+        checkpoint_callback = self.trainer.checkpoint_callback
+        if checkpoint_callback.best_model_score is None:
+            return
+        current_score = self.trainer.logger_connector.callback_metrics[
+            "val_avg_game_normalized_rewards"
+        ]
+        if current_score < checkpoint_callback.best_model_score:
+            self.ckpt_patience_count += 1
+        else:
+            self.ckpt_patience_count = 0
         if self.ckpt_patience_count >= self.hparams.ckpt_patience:  # type: ignore
             # reload the best checkpoint
-            if val_model_ckpt.best_model_score is not None:
-                self.print("patience ran out. loading from best validation checkpoint")
-                state_dict = torch.load(val_model_ckpt.best_model_path)["state_dict"]
-            else:
-                # we can assume that train_model_ckpt.best_model_score is not None here
-                self.print("patience ran out. loading from best training checkpoint")
-                state_dict = torch.load(train_model_ckpt.best_model_path)["state_dict"]
+            self.print("patience ran out. loading from best validation checkpoint")
+            state_dict = torch.load(self.trainer.checkpoint_callback.best_model_path)[
+                "state_dict"
+            ]
             self.load_state_dict(state_dict)
             self.update_target_action_selector()
             self.ckpt_patience_count = 0
@@ -1237,16 +1217,6 @@ def main(cfg: DictConfig) -> None:
             patience=cfg.train.early_stop_patience,
         ),
         EqualModelCheckpoint(
-            monitor=train_monitor,
-            mode="max",
-            filename="{epoch}-{step}-{train_avg_game_normalized_rewards:.2f}",
-        ),
-        # because of a bug:
-        # https://github.com/PyTorchLightning/pytorch-lightning/issues/6467
-        # we need to pass in the validation model checkpoint last
-        # the train model checkpoint won't really be used
-        # after the validation metrics goes over 0.
-        EqualNonZeroModelCheckpoint(
             monitor=val_monitor,
             mode="max",
             filename="{epoch}-{step}-{val_avg_game_normalized_rewards:.2f}",
