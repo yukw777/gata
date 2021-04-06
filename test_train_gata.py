@@ -997,6 +997,7 @@ def test_main(tmp_path):
                 "train.target_net_update_frequency=3",
                 "train.replay_buffer_populate_episodes=3",
                 "pl_trainer.max_epochs=2",
+                "pl_trainer.check_val_every_n_epoch=1",
                 f"+pl_trainer.default_root_dir={tmp_path}",
             ],
         )

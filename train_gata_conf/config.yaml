@@ -50,6 +50,7 @@ train:
 pl_trainer:
   max_epochs: 4000  # max_episodes/train_game_batch_size = 100000/25
   gradient_clip_val: 5
+  check_val_every_n_epoch: 40 # episodes/train_game_batch_size = 1000/25
 
 eval:
   test_only: false
