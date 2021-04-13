@@ -59,6 +59,8 @@ eval:
   node_vocab_path: vocabs/node_vocab.txt
   relation_vocab_path: vocabs/relation_vocab.txt
 
+seed: 123
+
 defaults:
   - logger: null
   - data: null

@@ -1201,7 +1201,7 @@ def main(cfg: DictConfig) -> None:
     print(f"Training with the following config:\n{OmegaConf.to_yaml(cfg)}")
 
     # seed
-    pl.seed_everything(42)
+    pl.seed_everything(cfg.seed)
 
     # trainer
     trainer_config = OmegaConf.to_container(cfg.pl_trainer, resolve=True)
