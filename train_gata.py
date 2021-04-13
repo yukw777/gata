@@ -681,11 +681,6 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
         self.game_normalized_rewards: List[float] = []
         self.game_steps: List[int] = []
 
-    def seed_envs(self, seed: int) -> None:
-        self.train_env.seed(seed)
-        self.val_env.seed(seed)
-        self.test_env.seed(seed)
-
     def update_target_action_selector(self) -> None:
         self.target_action_selector.load_state_dict(self.action_selector.state_dict())
 
@@ -978,6 +973,8 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             episodes_played
             < self.hparams.replay_buffer_populate_episodes  # type: ignore
         ):
+            np.random.seed(episodes_played)
+            self.train_env.seed(seed=episodes_played)
             for _ in self.play_episodes(sample, act_random, episode_end):
                 pass
             episodes_played += self.train_env.batch_size
@@ -1030,6 +1027,12 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             self.update_target_action_selector()
         episodes_played = self.current_epoch * self.train_env.batch_size
         self.agent.update_epsilon(episodes_played)
+        episodes_played_for_seed = (
+            self.hparams.replay_buffer_populate_episodes  # type: ignore
+            + episodes_played
+        )
+        np.random.seed(episodes_played_for_seed)
+        self.train_env.seed(seed=episodes_played_for_seed)
 
     def play_episodes(
         self,
@@ -1243,7 +1246,6 @@ def main(cfg: DictConfig) -> None:
                 "pretrained_graph_updater"
             ] = graph_updater_obs_gen.graph_updater
         lm = GATADoubleDQN(**lm_model_config, **cfg.train, **cfg.data)
-        lm.seed_envs(42)
 
         # fit
         trainer.fit(lm)
