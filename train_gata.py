@@ -973,8 +973,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             episodes_played
             < self.hparams.replay_buffer_populate_episodes  # type: ignore
         ):
-            np.random.seed(episodes_played)
-            self.train_env.seed(seed=episodes_played)
+            pl.seed_everything(episodes_played)
             for _ in self.play_episodes(sample, act_random, episode_end):
                 pass
             episodes_played += self.train_env.batch_size
@@ -1031,8 +1030,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
             self.hparams.replay_buffer_populate_episodes  # type: ignore
             + episodes_played
         )
-        np.random.seed(episodes_played_for_seed)
-        self.train_env.seed(seed=episodes_played_for_seed)
+        pl.seed_everything(episodes_played_for_seed)
 
     def play_episodes(
         self,
