@@ -1264,6 +1264,7 @@ def main(cfg: DictConfig) -> None:
 
         model = GATADoubleDQN.load_from_checkpoint(
             ckpt_path,
+            base_data_dir=cfg.data.base_data_dir,
             word_vocab_path=cfg.model.word_vocab_path,
             node_vocab_path=cfg.model.node_vocab_path,
             relation_vocab_path=cfg.model.relation_vocab_path,
