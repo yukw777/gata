@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import gym
 import textworld.gym
-import os
-import glob
 
 from typing import Optional, List, Sequence, Iterator, TypeVar
 from collections import Counter
