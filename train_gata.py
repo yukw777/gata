@@ -862,6 +862,7 @@ class GATADoubleDQN(WordNodeRelInitMixin, pl.LightningModule):
                     steps[i] = step
             if all(dones):
                 break
+            prev_actions = actions
 
         return {
             "game_rewards": torch.tensor(rewards, dtype=torch.float),
