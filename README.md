@@ -27,6 +27,16 @@ $ python train_gata.py +pl_trainer.gpus=1
 $ python train_gata.py +pl_trainer.gpus=1 data.difficulty_level=3 data.train_data_size=20
 ```
 
+## Play
+You can run the following command to have an agent play a game.
+
+```bash
+python play.py /path/to/game.z8 /path/to/gata.ckpt
+```
+
+## Pretrained Weights
+There are some pretrained weights under `/weights`. One for the graph updater, one for GATA trained at difficulty level 5 with 20 training games and one for GATA trained at difficulty level 5 with 100 training games.
+
 ## Fairscale
 *(We don't use Fairscale anymore, but leaving it for posterity.)*
 
